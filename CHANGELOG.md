@@ -14,7 +14,7 @@ This library's releases. The API's own changes are listed at the link above.
   - Shop health fields.
 - The retry tests use `createSegment` as their POST without an idempotency key: `issuePass` now takes one.
 
-## 0.1.0 (yayımlanmadı / unreleased)
+## 0.1.0 (2026-10-04)
 
 İlk önizleme. Rewloy API 1.0.0'a göre üretildi: 189 yol, 229 işlem.
 

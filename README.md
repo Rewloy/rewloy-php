@@ -2,7 +2,7 @@
 
 **Rewloy API'nin resmî PHP kütüphanesi.**
 
-> **Durum: önizleme (0.x): yayımlanmadı; API kararlı, kütüphane arayüzü 1.0'a kadar değişebilir.**
+> **Durum: önizleme (0.x), Packagist'te yayımlandı. API kararlı; kütüphane arayüzü 1.0'a kadar değişebilir.**
 
 [Rewloy](https://rewloy.com), işletmelerin dijital sadakat kartlarını
 müşterinin telefonuna koyar. Kart türleri damga, puan, VIP, cashback, hediye
@@ -29,29 +29,11 @@ ile de yapılabilir; bu kütüphane onu PHP'den kullanır:
 
 ## Kurulum
 
-Packagist'te yayımlanana kadar GitHub'dan, Composer'ın VCS deposu olarak
-kurun. PHP 8.2 ya da üstü ve `curl` eklentisi gerekir:
+PHP 8.2 ya da üstü ve `curl` eklentisi gerekir:
 
 ```sh
-composer config repositories.rewloy vcs https://github.com/Rewloy/rewloy-php
-composer require rewloy/rewloy-php:dev-main
+composer require rewloy/rewloy-php
 ```
-
-Bu iki komut `composer.json` dosyanıza şunu yazar:
-
-```json
-{
-    "repositories": [
-        { "type": "vcs", "url": "https://github.com/Rewloy/rewloy-php" }
-    ],
-    "require": {
-        "rewloy/rewloy-php": "dev-main"
-    }
-}
-```
-
-Bir sürüme bağlı kalmak için sona bir commit ekleyin:
-`dev-main#<commit>`. Yayımlandığında: `composer require rewloy/rewloy-php`.
 
 ## Başlarken
 
@@ -470,7 +452,7 @@ Bir güvenlik açığı bulursanız [SECURITY.md](SECURITY.md) dosyasındaki yol
 
 **The official PHP library for the Rewloy API.**
 
-> **Status: preview (0.x), not published yet. The API is stable; the
+> **Status: preview (0.x), published on Packagist. The API is stable; the
 > library's interface may change until 1.0.**
 
 The documentation of the API itself is in Turkish (links above). In short:
@@ -485,12 +467,10 @@ The documentation of the API itself is in Turkish (links above). In short:
 
 ### Install
 
-Until it is on Packagist, install it from GitHub as a Composer VCS repository
-(PHP 8.2 or later with `curl`). Pin a commit with `dev-main#<commit>`.
+PHP 8.2 or later with `curl`:
 
 ```sh
-composer config repositories.rewloy vcs https://github.com/Rewloy/rewloy-php
-composer require rewloy/rewloy-php:dev-main
+composer require rewloy/rewloy-php
 ```
 
 ### Use
@@ -566,3 +546,9 @@ $event = Rewloy\Webhook::verify($rawBody, $signatureHeader, $secret);
 
 Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) says.
 [MIT](LICENSE) licensed.
+
+## Yeni sürüm yayımlamak / Releasing
+
+`Client::VERSION`'ı ve CHANGELOG'u güncelleyin, commit'leyin, `v<sürüm>` etiketini gönderin. Packagist etiketi kendiliğinden alır.
+
+Bump `Client::VERSION` and the changelog, commit, and push a `v<version>` tag. Packagist picks the tag up by itself.
