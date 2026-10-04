@@ -33,6 +33,526 @@ trait Methods
      */
     abstract protected function open(string $operation, array $args): Generator;
 
+    // ------------------------------------------------------------ Kartlar
+
+    /**
+     * Kart ver
+     *
+     * Bir programdan kart verir. E-posta gönderilirse kart o müşteriye bağlanır (yoksa oluşturulur) ve `kvkkConsent: true` gönderilmelidir: bu, işletmenin müşteriye kendi aydınlatma metnini sunduğunu beyan etmesidir; beyanın doğruluğundan işletme sorumludur. Bir rıza kutusu olarak sormayın. Dönen `cardUrl` müşterinin özel kart bağlantısıdır: müşteriye iletin, kayıtlara yazmayın. Hediye kartında `faceMinor` (kuruş) zorunludur.
+     * - **Idempotency-Key** (isteğe bağlı, önerilir): her çağrı yeni bir kart açar; başlıkla aynı anahtar ve aynı gövdeyle tekrar yeni kart açmaz, ilk yanıtı (aynı kart, aynı bağlantı) `Idempotent-Replayed: true` ile döndürür. Aynı anahtar başka bir gövdeyle `422 IDEMPOTENCY_KEY_REUSED`. Bir siparişe kart açan mağaza için sipariş başına sabit bir anahtar iyi bir seçimdir. Saklanan yanıt şifrelidir ve 7 gün tutulur; tekrar yalnız kimlik o programda hâlâ kart verebiliyorsa döner (yoksa `403 FORBIDDEN`).
+     * - **Bir sipariş için kart** (`orderId` ve `shopId` birlikte, `email` ile): kartı kazandıran sipariş de bu karta sayılır, mağazanın sipariş bildirimi karttan önce ya da sonra gelsin. Bildirim henüz gelmediyse (`order.result: waiting`) geldiğinde bu kartı bulur. Önce gelip "Kartı yok" diye kaydedildiyse (`resend`) sipariş yeniden açılır: mağaza siparişi 7 gün içinde yeniden gönderdiğinde (aynı imzalı bildirim; WooCommerce eklentisi webhook'unun o siparişi yeniden teslimiyle) siparişin kendi e-postası ve tutarıyla bu karta işlenir. Tutar hiçbir zaman bu çağrıdan alınmaz, siparişten hiçbir şey saklanmaz ve sipariş yine bir kez sayılır. Bağlantı bu işletmenin ve bu programın olmalıdır (`404 SHOP_NOT_FOUND`, `409 SHOP_PROGRAM_MISMATCH`).
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `passes.issue` — Kart verme.
+     *
+     * `POST /v1/passes`
+     *
+     * Arguments:
+     * - `body.faceMinor`: Hediye kartı tutarı, kuruş
+     * - `body.birthday`: YYYY-AA-GG
+     * - `body.orderId`: Kartı kazandıran siparişin mağazadaki numarası (webhook'taki `id`). `shopId` ve `email` ile birlikte.
+     * - `body.shopId`: Siparişin geldiği mağaza bağlantısı (`GET /v1/shops`). `orderId` ile birlikte.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-issuePass API referansı
+     *
+     * @param array{
+     *     body: array{
+     *         programId: string,
+     *         email?: string,
+     *         name?: string,
+     *         homeLocationId?: string,
+     *         faceMinor?: int,
+     *         kvkkConsent?: bool,
+     *         firstName?: string,
+     *         lastName?: string,
+     *         phone?: string,
+     *         birthday?: string,
+     *         orderId?: string,
+     *         shopId?: string,
+     *     },
+     *     idempotencyKey?: string|null,
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     serial: string,
+     *     cardUrl: string,
+     *     order?: array{
+     *         shopId: string,
+     *         orderId: string,
+     *         result: 'waiting'|'resend'|'recorded',
+     *         outcome: 'credited'|'unmatched'|'below'|'paused'|'currency'|null,
+     *     },
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function issuePass(array $args): array
+    {
+        /**
+         * @var array{
+         *     serial: string,
+         *     cardUrl: string,
+         *     order?: array{
+         *         shopId: string,
+         *         orderId: string,
+         *         result: 'waiting'|'resend'|'recorded',
+         *         outcome: 'credited'|'unmatched'|'below'|'paused'|'currency'|null,
+         *     },
+         * } $data
+         */
+        $data = $this->call('issuePass', $args);
+        return $data;
+    }
+
+    /**
+     * Bir kartın durumu
+     *
+     * Bakiye, ilerleme, ödül hazırlığı ve seviye — müşterinin cüzdanında gördüğüyle aynı.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `passes.read` — Kartları görüntüleme.
+     *
+     * `GET /v1/passes/{serial}`
+     *
+     * Arguments:
+     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-getPass API referansı
+     *
+     * @param array{
+     *     params: array{serial: string},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     serial: string,
+     *     programId: string,
+     *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *     status: string,
+     *     balance: int|float|null,
+     *     progressLabel?: string|null,
+     *     progressValue?: string|null,
+     *     rewardReady: bool,
+     *     rewardsReady: int,
+     *     tier?: string|null,
+     *     nextTier?: mixed,
+     *     nextReward?: mixed,
+     *     updatedAt: string,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function getPass(array $args): array
+    {
+        /**
+         * @var array{
+         *     serial: string,
+         *     programId: string,
+         *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *     status: string,
+         *     balance: int|float|null,
+         *     progressLabel?: string|null,
+         *     progressValue?: string|null,
+         *     rewardReady: bool,
+         *     rewardsReady: int,
+         *     tier?: string|null,
+         *     nextTier?: mixed,
+         *     nextReward?: mixed,
+         *     updatedAt: string,
+         * } $data
+         */
+        $data = $this->call('getPass', $args);
+        return $data;
+    }
+
+    /**
+     * Kartın bir şubedeki kasa kuralları
+     *
+     * Kasada işlem yapmadan önce: kart bu şubede kullanılabilir mi, hangi şubelerde geçerli, şu an burada hangi kasa kampanyası çalışıyor ve kasiyerin göreceği uyarılar (tarayıcıdaki şeritlerin aynısı). `allowed: false` iken işlem `WRONG_LOCATION` ile reddedilir (ADR 139).
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `scan.use` — Tarayıcıyı kullanma.
+     *
+     * `GET /v1/passes/{serial}/till`
+     *
+     * Arguments:
+     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-getPassTill API referansı
+     *
+     * @param array{
+     *     params: array{serial: string},
+     *     query: array{locationId: string},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     allowed: bool,
+     *     branches: list<string>|null,
+     *     promotion: array{
+     *         id: string,
+     *         name: string,
+     *         factor: int,
+     *         staffNote: string,
+     *         endsAt: string,
+     *     }|null,
+     *     notices: list<array{tone: 'block'|'promo'|'info', text: string, note?: string}>,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function getPassTill(array $args): array
+    {
+        /**
+         * @var array{
+         *     allowed: bool,
+         *     branches: list<string>|null,
+         *     promotion: array{
+         *         id: string,
+         *         name: string,
+         *         factor: int,
+         *         staffNote: string,
+         *         endsAt: string,
+         *     }|null,
+         *     notices: list<array{tone: 'block'|'promo'|'info', text: string, note?: string}>,
+         * } $data
+         */
+        $data = $this->call('getPassTill', $args);
+        return $data;
+    }
+
+    /**
+     * Kasada işlem
+     *
+     * Karta, bir şubede kasa işlemi uygular. **Idempotency-Key zorunludur**: aynı anahtarla tekrar, bakiyeyi ikinci kez değiştirmez ve ilk sonucu döndürür (`duplicate: true`). Salt-okunur hesapta da çalışır: mevcut kartlar çalışmaya devam eder.
+     * | action | kart | gerekli alan |
+     * |---|---|---|
+     * | `earn-stamps` | damga | `count` (varsayılan 1) |
+     * | `redeem-stamps` | damga | — |
+     * | `earn-points` | puan | `amountMinor` (harcama, kuruş) |
+     * | `redeem-reward` | puan | `rewardIndex` |
+     * | `spend-points` | puan | `points` |
+     * | `visit` | VIP | — |
+     * | `spend` | hediye kartı, cashback | `amountMinor` |
+     * | `accrue` | cashback | `amountMinor` (alışveriş tutarı) |
+     * | `load` | hediye kartı | `amountMinor` — ayrıca `instruments.issue` yetkisi |
+     * | `use` | kupon, indirim | — |
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `scan.use` — Tarayıcıyı kullanma.
+     *
+     * Salt-okunur hesapta da çalışır.
+     *
+     * `POST /v1/passes/{serial}/actions`
+     *
+     * Arguments:
+     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-passAction API referansı
+     *
+     * @param array{
+     *     params: array{serial: string},
+     *     body: array{
+     *         action: 'earn-stamps'|'redeem-stamps'|'earn-points'|'redeem-reward'|'visit'|'spend'|'accrue'|'use'|'load'|'spend-points',
+     *         locationId: string,
+     *         count?: int,
+     *         points?: int,
+     *         amountMinor?: int,
+     *         rewardIndex?: int,
+     *     },
+     *     idempotencyKey?: string|null,
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     balance: int|float,
+     *     duplicate: bool,
+     *     detail?: string,
+     *     promotion?: array{id: string, name: string, factor: int},
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function passAction(array $args): array
+    {
+        /**
+         * @var array{
+         *     balance: int|float,
+         *     duplicate: bool,
+         *     detail?: string,
+         *     promotion?: array{id: string, name: string, factor: int},
+         * } $data
+         */
+        $data = $this->call('passAction', $args);
+        return $data;
+    }
+
+    // ------------------------------------------------------------ Katılım
+
+    /**
+     * Katılım formu
+     *
+     * Bir programın katılım formunu kendi uygulamanızda çizmek için: işletme ve program adı, türü, e-postadan başka sorulan alanlar (zorunlu mu), renkler ve görseller. Kimlik istemez.
+     *
+     * **Kimlik:** kimlik gerekmez, kart sahibi oturumu, ekip oturumu, API anahtarı.
+     *
+     * `GET /v1/public/programs/{id}`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-publicProgram API referansı
+     *
+     * @param array{
+     *     params: array{id: string},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     programId: string,
+     *     businessName: string,
+     *     programName: string,
+     *     type: string,
+     *     fields: list<array{id: 'firstName'|'lastName'|'phone'|'birthday', required: bool}>,
+     *     colors: array{
+     *         background: string,
+     *         foreground: string,
+     *         label: string,
+     *         accent: string,
+     *     },
+     *     logoUrl: string,
+     *     bannerUrl: string|null,
+     *     joinUrl: string,
+     *     privacyUrl: string,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function publicProgram(array $args): array
+    {
+        /**
+         * @var array{
+         *     programId: string,
+         *     businessName: string,
+         *     programName: string,
+         *     type: string,
+         *     fields: list<array{id: 'firstName'|'lastName'|'phone'|'birthday', required: bool}>,
+         *     colors: array{
+         *         background: string,
+         *         foreground: string,
+         *         label: string,
+         *         accent: string,
+         *     },
+         *     logoUrl: string,
+         *     bannerUrl: string|null,
+         *     joinUrl: string,
+         *     privacyUrl: string,
+         * } $data
+         */
+        $data = $this->call('publicProgram', $args);
+        return $data;
+    }
+
+    /**
+     * Programa katıl
+     *
+     * Kişi kendi kartını alır; kartın bağlantısı e-postasına da gider (sekme kapansa da kart kaybolmaz). Aynı e-postanın bu programda zaten kartı varsa yeni kart verilmez, mevcut kartın bağlantısı **yalnız kişinin e-postasına** gider (`created: false`). Formun zorunlu alanları `GET /v1/public/programs/{id}` ile öğrenilir. IP başına 10 dakikada 30.
+     *
+     * **Kimlik:** kimlik gerekmez, kart sahibi oturumu, ekip oturumu, API anahtarı.
+     *
+     * `POST /v1/public/programs/{id}/join`
+     *
+     * Arguments:
+     * - `body.birthday`: YYYY-AA-GG
+     * - `body.kvkkConsent`: Kişiye işletmenin aydınlatma metni sunuldu (işletmenin beyanı; doğruluğundan işletme sorumludur). Bunu bir rıza kutusu olarak sormayın.
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-joinProgram API referansı
+     *
+     * @param array{
+     *     params: array{id: string},
+     *     body: array{
+     *         email: string,
+     *         firstName?: string,
+     *         lastName?: string,
+     *         phone?: string,
+     *         birthday?: string,
+     *         kvkkConsent: true,
+     *     },
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{created: bool, serial: string|null, cardUrl: string|null}
+     *
+     * @throws RewloyException
+     */
+    public function joinProgram(array $args): array
+    {
+        /**
+         * @var array{created: bool, serial: string|null, cardUrl: string|null} $data
+         */
+        $data = $this->call('joinProgram', $args);
+        return $data;
+    }
+
+    /**
+     * Bir kod
+     *
+     * Hediye kartı, kupon ya da indirim kodunun ne verdiği ve hâlâ alınıp alınamayacağı. Kimlik istemez; yalnız kodu bilen birinin öğrenebileceği kadarını söyler.
+     *
+     * **Kimlik:** kimlik gerekmez, kart sahibi oturumu, ekip oturumu, API anahtarı.
+     *
+     * `GET /v1/public/codes/{code}`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-publicCode API referansı
+     *
+     * @param array{
+     *     params: array{code: string},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     code: string,
+     *     name: string,
+     *     type: 'giftcard'|'voucher'|'discount',
+     *     businessName: string,
+     *     valueMinor: int|null,
+     *     currency: string|null,
+     *     offerText: string|null,
+     *     percent: int|null,
+     *     usage: 'once'|'limited'|'unlimited',
+     *     usageLimit: int|null,
+     *     validUntil: string|null,
+     *     fields: list<array{id: 'firstName'|'lastName'|'phone'|'birthday', required: bool}>,
+     *     claimable: bool,
+     *     reason: 'closed'|'full'|'expired'|null,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function publicCode(array $args): array
+    {
+        /**
+         * @var array{
+         *     code: string,
+         *     name: string,
+         *     type: 'giftcard'|'voucher'|'discount',
+         *     businessName: string,
+         *     valueMinor: int|null,
+         *     currency: string|null,
+         *     offerText: string|null,
+         *     percent: int|null,
+         *     usage: 'once'|'limited'|'unlimited',
+         *     usageLimit: int|null,
+         *     validUntil: string|null,
+         *     fields: list<array{id: 'firstName'|'lastName'|'phone'|'birthday', required: bool}>,
+         *     claimable: bool,
+         *     reason: 'closed'|'full'|'expired'|null,
+         * } $data
+         */
+        $data = $this->call('publicCode', $args);
+        return $data;
+    }
+
+    /**
+     * Kodu kullan, kartı al
+     *
+     * Kişi koddan kartını alır. Kişi başına sınır dolduysa `ALREADY_CLAIMED` döner ve mevcut kartın bağlantısı **yalnız kişinin e-postasına** gider. IP başına 10 dakikada 30.
+     *
+     * **Kimlik:** kimlik gerekmez, kart sahibi oturumu, ekip oturumu, API anahtarı.
+     *
+     * `POST /v1/public/codes/{code}/claim`
+     *
+     * Arguments:
+     * - `body.birthday`: YYYY-AA-GG
+     * - `body.kvkkConsent`: Kişiye işletmenin aydınlatma metni sunuldu (işletmenin beyanı; doğruluğundan işletme sorumludur). Bunu bir rıza kutusu olarak sormayın.
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-claimCode API referansı
+     *
+     * @param array{
+     *     params: array{code: string},
+     *     body: array{
+     *         email: string,
+     *         firstName?: string,
+     *         lastName?: string,
+     *         phone?: string,
+     *         birthday?: string,
+     *         kvkkConsent: true,
+     *     },
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{serial: string, cardUrl: string}
+     *
+     * @throws RewloyException
+     */
+    public function claimCode(array $args): array
+    {
+        /**
+         * @var array{serial: string, cardUrl: string} $data
+         */
+        $data = $this->call('claimCode', $args);
+        return $data;
+    }
+
+    /**
+     * Kart bağlantımı e-postama gönder
+     *
+     * Kart yazılan adrese kayıtlıysa bağlantısı o adrese gider. Yanıt her durumda aynıdır (kartın kime ait olduğu sızmaz). IP başına saatte 10, kart başına saatte 3.
+     *
+     * **Kimlik:** kimlik gerekmez, kart sahibi oturumu, ekip oturumu, API anahtarı.
+     *
+     * `POST /v1/public/cards/{serial}/email-link`
+     *
+     * Arguments:
+     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-emailCardLink API referansı
+     *
+     * @param array{
+     *     params: array{serial: string},
+     *     body: array{email: string},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{accepted: true}
+     *
+     * @throws RewloyException
+     */
+    public function emailCardLink(array $args): array
+    {
+        /**
+         * @var array{accepted: true} $data
+         */
+        $data = $this->call('emailCardLink', $args);
+        return $data;
+    }
+
     // ------------------------------------------------------------ Belge
 
     /**
@@ -85,6 +605,8 @@ trait Methods
      *         seatStatus: 'active'|'suspended',
      *         requires2fa: bool,
      *         permissions: list<string>,
+     *         mode: 'live'|'test',
+     *         testOf: string|null,
      *     }>,
      * }
      *
@@ -104,6 +626,8 @@ trait Methods
          *         seatStatus: 'active'|'suspended',
          *         requires2fa: bool,
          *         permissions: list<string>,
+         *         mode: 'live'|'test',
+         *         testOf: string|null,
          *     }>,
          * } $data
          */
@@ -179,7 +703,7 @@ trait Methods
     /**
      * Kim olarak bağlıyım?
      *
-     * Ekip oturumu: kişi, iki adımlı doğrulama durumu ve koltuk taşıdığı işletmeler (her biri için yetkiler). API anahtarı: anahtarın kendisi, işletmesi, rolü ve kapsamı. Bir entegrasyonun ilk çağrısı olarak bağlantıyı doğrulamak için idealdir.
+     * Ekip oturumu: kişi, iki adımlı doğrulama durumu ve koltuk taşıdığı işletmeler (her biri için yetkiler). API anahtarı: anahtarın kendisi, işletmesi, rolü, kapsamı, etkin yetkileri (`permissions`) ve bir mağaza eklentisinin anahtarıysa bağlantısı (`key.shopId`). Bir entegrasyonun ilk çağrısı olarak bağlantıyı doğrulamak için idealdir. `mode`: çağıranın test ortamında mı (`test`) gerçek işletmede mi (`live`) çalıştığı; ekip oturumu bir işletme seçmediyse `null`.
      *
      * **Kimlik:** ekip oturumu, API anahtarı.
      *
@@ -211,8 +735,11 @@ trait Methods
      *         seatStatus: 'active'|'suspended',
      *         requires2fa: bool,
      *         permissions: list<string>,
+     *         mode: 'live'|'test',
+     *         testOf: string|null,
      *     }>,
      *     activeMerchantId: string|null,
+     *     mode: 'live'|'test'|null,
      * }|array{
      *     kind: 'key',
      *     key: array{
@@ -223,9 +750,11 @@ trait Methods
      *         scope: string,
      *         expiresAt: string|null,
      *         rateLimitPerMinute: int,
+     *         shopId: string|null,
      *     },
      *     business: array{id: string, name: string},
      *     permissions: list<string>,
+     *     mode: 'live'|'test',
      * }
      *
      * @throws RewloyException
@@ -249,8 +778,11 @@ trait Methods
          *         seatStatus: 'active'|'suspended',
          *         requires2fa: bool,
          *         permissions: list<string>,
+         *         mode: 'live'|'test',
+         *         testOf: string|null,
          *     }>,
          *     activeMerchantId: string|null,
+         *     mode: 'live'|'test'|null,
          * }|array{
          *     kind: 'key',
          *     key: array{
@@ -261,9 +793,11 @@ trait Methods
          *         scope: string,
          *         expiresAt: string|null,
          *         rateLimitPerMinute: int,
+         *         shopId: string|null,
          *     },
          *     business: array{id: string, name: string},
          *     permissions: list<string>,
+         *     mode: 'live'|'test',
          * } $data
          */
         $data = $this->call('me', $args);
@@ -635,6 +1169,8 @@ trait Methods
      *         seatStatus: 'active'|'suspended',
      *         requires2fa: bool,
      *         permissions: list<string>,
+     *         mode: 'live'|'test',
+     *         testOf: string|null,
      *     }>,
      *     merchantId: string,
      *     termsVersion: string,
@@ -656,6 +1192,8 @@ trait Methods
          *         seatStatus: 'active'|'suspended',
          *         requires2fa: bool,
          *         permissions: list<string>,
+         *         mode: 'live'|'test',
+         *         testOf: string|null,
          *     }>,
          *     merchantId: string,
          *     termsVersion: string,
@@ -839,6 +1377,8 @@ trait Methods
      *         seatStatus: 'active'|'suspended',
      *         requires2fa: bool,
      *         permissions: list<string>,
+     *         mode: 'live'|'test',
+     *         testOf: string|null,
      *     }>,
      * }
      *
@@ -858,6 +1398,8 @@ trait Methods
          *         seatStatus: 'active'|'suspended',
          *         requires2fa: bool,
          *         permissions: list<string>,
+         *         mode: 'live'|'test',
+         *         testOf: string|null,
          *     }>,
          * } $data
          */
@@ -1435,249 +1977,6 @@ trait Methods
          * @var array{required: bool} $data
          */
         $data = $this->call('setTeam2fa', $args);
-        return $data;
-    }
-
-    // ------------------------------------------------------------ Kartlar
-
-    /**
-     * Kart ver
-     *
-     * Bir programdan kart verir. E-posta gönderilirse kart o müşteriye bağlanır (yoksa oluşturulur) ve `kvkkConsent: true` gönderilmelidir: bu, işletmenin müşteriye kendi aydınlatma metnini sunduğunu beyan etmesidir; beyanın doğruluğundan işletme sorumludur. Bir rıza kutusu olarak sormayın. Dönen `cardUrl` müşterinin özel kart bağlantısıdır: müşteriye iletin, kayıtlara yazmayın. Hediye kartında `faceMinor` (kuruş) zorunludur.
-     *
-     * **Kimlik:** API anahtarı, ekip oturumu.
-     *
-     * **Yetki:** `passes.issue` — Kart verme.
-     *
-     * `POST /v1/passes`
-     *
-     * Arguments:
-     * - `body.faceMinor`: Hediye kartı tutarı, kuruş
-     * - `body.birthday`: YYYY-AA-GG
-     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
-     *
-     * @see https://rewloy.com/gelistiriciler/api#op-issuePass API referansı
-     *
-     * @param array{
-     *     body: array{
-     *         programId: string,
-     *         email?: string,
-     *         name?: string,
-     *         homeLocationId?: string,
-     *         faceMinor?: int,
-     *         kvkkConsent?: bool,
-     *         firstName?: string,
-     *         lastName?: string,
-     *         phone?: string,
-     *         birthday?: string,
-     *     },
-     *     merchant?: string|null,
-     *     timeout?: int|float|null,
-     *     maxRetries?: int|null,
-     * } $args
-     * @return array{serial: string, cardUrl: string}
-     *
-     * @throws RewloyException
-     */
-    public function issuePass(array $args): array
-    {
-        /**
-         * @var array{serial: string, cardUrl: string} $data
-         */
-        $data = $this->call('issuePass', $args);
-        return $data;
-    }
-
-    /**
-     * Bir kartın durumu
-     *
-     * Bakiye, ilerleme, ödül hazırlığı ve seviye — müşterinin cüzdanında gördüğüyle aynı.
-     *
-     * **Kimlik:** API anahtarı, ekip oturumu.
-     *
-     * **Yetki:** `passes.read` — Kartları görüntüleme.
-     *
-     * `GET /v1/passes/{serial}`
-     *
-     * Arguments:
-     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
-     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
-     *
-     * @see https://rewloy.com/gelistiriciler/api#op-getPass API referansı
-     *
-     * @param array{
-     *     params: array{serial: string},
-     *     merchant?: string|null,
-     *     timeout?: int|float|null,
-     *     maxRetries?: int|null,
-     * } $args
-     * @return array{
-     *     serial: string,
-     *     programId: string,
-     *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
-     *     status: string,
-     *     balance: int|float|null,
-     *     progressLabel?: string|null,
-     *     progressValue?: string|null,
-     *     rewardReady: bool,
-     *     rewardsReady: int,
-     *     tier?: string|null,
-     *     nextTier?: mixed,
-     *     nextReward?: mixed,
-     *     updatedAt: string,
-     * }
-     *
-     * @throws RewloyException
-     */
-    public function getPass(array $args): array
-    {
-        /**
-         * @var array{
-         *     serial: string,
-         *     programId: string,
-         *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
-         *     status: string,
-         *     balance: int|float|null,
-         *     progressLabel?: string|null,
-         *     progressValue?: string|null,
-         *     rewardReady: bool,
-         *     rewardsReady: int,
-         *     tier?: string|null,
-         *     nextTier?: mixed,
-         *     nextReward?: mixed,
-         *     updatedAt: string,
-         * } $data
-         */
-        $data = $this->call('getPass', $args);
-        return $data;
-    }
-
-    /**
-     * Kartın bir şubedeki kasa kuralları
-     *
-     * Kasada işlem yapmadan önce: kart bu şubede kullanılabilir mi, hangi şubelerde geçerli, şu an burada hangi kasa kampanyası çalışıyor ve kasiyerin göreceği uyarılar (tarayıcıdaki şeritlerin aynısı). `allowed: false` iken işlem `WRONG_LOCATION` ile reddedilir (ADR 139).
-     *
-     * **Kimlik:** API anahtarı, ekip oturumu.
-     *
-     * **Yetki:** `scan.use` — Tarayıcıyı kullanma.
-     *
-     * `GET /v1/passes/{serial}/till`
-     *
-     * Arguments:
-     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
-     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
-     *
-     * @see https://rewloy.com/gelistiriciler/api#op-getPassTill API referansı
-     *
-     * @param array{
-     *     params: array{serial: string},
-     *     query: array{locationId: string},
-     *     merchant?: string|null,
-     *     timeout?: int|float|null,
-     *     maxRetries?: int|null,
-     * } $args
-     * @return array{
-     *     allowed: bool,
-     *     branches: list<string>|null,
-     *     promotion: array{
-     *         id: string,
-     *         name: string,
-     *         factor: int,
-     *         staffNote: string,
-     *         endsAt: string,
-     *     }|null,
-     *     notices: list<array{tone: 'block'|'promo'|'info', text: string, note?: string}>,
-     * }
-     *
-     * @throws RewloyException
-     */
-    public function getPassTill(array $args): array
-    {
-        /**
-         * @var array{
-         *     allowed: bool,
-         *     branches: list<string>|null,
-         *     promotion: array{
-         *         id: string,
-         *         name: string,
-         *         factor: int,
-         *         staffNote: string,
-         *         endsAt: string,
-         *     }|null,
-         *     notices: list<array{tone: 'block'|'promo'|'info', text: string, note?: string}>,
-         * } $data
-         */
-        $data = $this->call('getPassTill', $args);
-        return $data;
-    }
-
-    /**
-     * Kasada işlem
-     *
-     * Karta, bir şubede kasa işlemi uygular. **Idempotency-Key zorunludur**: aynı anahtarla tekrar, bakiyeyi ikinci kez değiştirmez ve ilk sonucu döndürür (`duplicate: true`). Salt-okunur hesapta da çalışır: mevcut kartlar çalışmaya devam eder.
-     * | action | kart | gerekli alan |
-     * |---|---|---|
-     * | `earn-stamps` | damga | `count` (varsayılan 1) |
-     * | `redeem-stamps` | damga | — |
-     * | `earn-points` | puan | `amountMinor` (harcama, kuruş) |
-     * | `redeem-reward` | puan | `rewardIndex` |
-     * | `spend-points` | puan | `points` |
-     * | `visit` | VIP | — |
-     * | `spend` | hediye kartı, cashback | `amountMinor` |
-     * | `accrue` | cashback | `amountMinor` (alışveriş tutarı) |
-     * | `load` | hediye kartı | `amountMinor` — ayrıca `instruments.issue` yetkisi |
-     * | `use` | kupon, indirim | — |
-     *
-     * **Kimlik:** API anahtarı, ekip oturumu.
-     *
-     * **Yetki:** `scan.use` — Tarayıcıyı kullanma.
-     *
-     * Salt-okunur hesapta da çalışır.
-     *
-     * `POST /v1/passes/{serial}/actions`
-     *
-     * Arguments:
-     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
-     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
-     *
-     * @see https://rewloy.com/gelistiriciler/api#op-passAction API referansı
-     *
-     * @param array{
-     *     params: array{serial: string},
-     *     body: array{
-     *         action: 'earn-stamps'|'redeem-stamps'|'earn-points'|'redeem-reward'|'visit'|'spend'|'accrue'|'use'|'load'|'spend-points',
-     *         locationId: string,
-     *         count?: int,
-     *         points?: int,
-     *         amountMinor?: int,
-     *         rewardIndex?: int,
-     *     },
-     *     idempotencyKey?: string|null,
-     *     merchant?: string|null,
-     *     timeout?: int|float|null,
-     *     maxRetries?: int|null,
-     * } $args
-     * @return array{
-     *     balance: int|float,
-     *     duplicate: bool,
-     *     detail?: string,
-     *     promotion?: array{id: string, name: string, factor: int},
-     * }
-     *
-     * @throws RewloyException
-     */
-    public function passAction(array $args): array
-    {
-        /**
-         * @var array{
-         *     balance: int|float,
-         *     duplicate: bool,
-         *     detail?: string,
-         *     promotion?: array{id: string, name: string, factor: int},
-         * } $data
-         */
-        $data = $this->call('passAction', $args);
         return $data;
     }
 
@@ -8095,11 +8394,11 @@ trait Methods
     /**
      * E-ticaret bağlantıları
      *
-     * Shopify ve WooCommerce mağazaları: her sipariş (ya da tutar eşiği) müşterinin kartına damga, puan, ziyaret ya da cashback olarak işlenir. Planda `ecommerce` özelliği gerekir.
+     * Shopify ve WooCommerce mağazaları: her sipariş (ya da tutar eşiği) müşterinin kartına damga, puan, ziyaret ya da cashback olarak işlenir. Planda `ecommerce` özelliği gerekir. `shops.read` ister (ya da, geriye uyum için, `settings.read`). Kapsamı programlarla sınırlı bir kimlik yalnız o programların bağlantılarını görür; bağlantı koduyla kurulmuş bir eklentinin anahtarı yalnız kendi bağlantısını.
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
-     * **Yetki:** `settings.read` — Ayarları görüntüleme.
+     * **Yetki:** `shops.read` — Mağaza bağlantılarını görüntüleme.
      *
      * `GET /v1/shops`
      *
@@ -8134,6 +8433,12 @@ trait Methods
      *         paused: int,
      *         currency: int,
      *     },
+     *     lastDelivery: array{
+     *         at: string,
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+     *     }|null,
+     *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+     *     pluginKey: array{id: string, prefix: string, name: string}|null,
      * }>
      *
      * @throws RewloyException
@@ -8162,6 +8467,12 @@ trait Methods
          *         paused: int,
          *         currency: int,
          *     },
+         *     lastDelivery: array{
+         *         at: string,
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+         *     }|null,
+         *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+         *     pluginKey: array{id: string, prefix: string, name: string}|null,
          * }> $data
          */
         $data = $this->call('listShops', $args);
@@ -8171,14 +8482,15 @@ trait Methods
     /**
      * Mağaza bağla
      *
-     * Bir bağlantı kartlara bakiye ekleyebildiği için API anahtarıyla aynı yetkiyi ister (`apikeys.manage`). En fazla 5 mağaza.
+     * Bağlantının programında `shops.manage` ister (ya da, geriye uyum için, `apikeys.manage`): bir bağlantı kartlara bakiye ekleyebildiği için Yönetici rolünde yoktur; "E-ticaret" rolünde vardır. En fazla 5 mağaza. WooCommerce için Rewloy eklentisini kullanıyorsanız bağlantı kodu (`POST /v1/shops/connect`) bu çağrının, sırrın ve anahtarın yerini tutar.
      * - **Shopify**: Shopify yöneticisinde Ayarlar → Bildirimler sayfasındaki imza anahtarını `shopifySecret` olarak gönderin; sonra aynı sayfada "Sipariş ödemesi" webhook'unu `webhookUrl`'e yönlendirin.
      * - **WooCommerce**: sır Rewloy'da üretilir ve yanıtta **bir kez** `secret` olarak döner; WooCommerce → Webhook'lar'da "Sipariş güncellendi" için `webhookUrl` ve bu sırla bir webhook ekleyin.
      * - `rule: amount` ise `perAmountMinor` (100 – 10.000.000 kuruş) zorunludur. Hediye kartı, kupon ve indirim kartı siparişle doldurulmaz.
+     * - Bağlantı koduyla kurulmuş bir eklentinin anahtarı yeni bağlantı kuramaz (`403 FORBIDDEN`).
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
-     * **Yetki:** `apikeys.manage` — API anahtarı ve mağaza bağlantısı yönetimi.
+     * **Yetki:** `shops.manage` — Mağaza bağlantısı yönetimi.
      *
      * `POST /v1/shops`
      *
@@ -8221,6 +8533,12 @@ trait Methods
      *         paused: int,
      *         currency: int,
      *     },
+     *     lastDelivery: array{
+     *         at: string,
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+     *     }|null,
+     *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+     *     pluginKey: array{id: string, prefix: string, name: string}|null,
      *     secret: string|null,
      * }
      *
@@ -8250,6 +8568,12 @@ trait Methods
          *         paused: int,
          *         currency: int,
          *     },
+         *     lastDelivery: array{
+         *         at: string,
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+         *     }|null,
+         *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+         *     pluginKey: array{id: string, prefix: string, name: string}|null,
          *     secret: string|null,
          * } $data
          */
@@ -8260,9 +8584,11 @@ trait Methods
     /**
      * Bir bağlantı
      *
+     * Bağlantının kuralı, sipariş sayıları ve sağlığı: mağazadan gelen son imzalı istek ve sonucu (`lastDelivery`), imzası tutmayan son istek (`lastRefusal`). `shops.read` ister (ya da, geriye uyum için, `settings.read`).
+     *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
-     * **Yetki:** `settings.read` — Ayarları görüntüleme.
+     * **Yetki:** `shops.read` — Mağaza bağlantılarını görüntüleme.
      *
      * `GET /v1/shops/{id}`
      *
@@ -8298,6 +8624,12 @@ trait Methods
      *         paused: int,
      *         currency: int,
      *     },
+     *     lastDelivery: array{
+     *         at: string,
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+     *     }|null,
+     *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+     *     pluginKey: array{id: string, prefix: string, name: string}|null,
      * }
      *
      * @throws RewloyException
@@ -8326,6 +8658,12 @@ trait Methods
          *         paused: int,
          *         currency: int,
          *     },
+         *     lastDelivery: array{
+         *         at: string,
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+         *     }|null,
+         *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+         *     pluginKey: array{id: string, prefix: string, name: string}|null,
          * } $data
          */
         $data = $this->call('getShop', $args);
@@ -8335,11 +8673,11 @@ trait Methods
     /**
      * Bağlantıyı aç ya da kapat
      *
-     * Kapalıyken gelen siparişler kaydedilir ama karta işlenmez (`paused`).
+     * Kapalıyken gelen siparişler kaydedilir ama karta işlenmez (`paused`). Bağlantının programında `shops.manage` ister (ya da, geriye uyum için, `apikeys.manage`): bir bağlantı kartlara bakiye ekleyebildiği için Yönetici rolünde yoktur; "E-ticaret" rolünde vardır.
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
-     * **Yetki:** `apikeys.manage` — API anahtarı ve mağaza bağlantısı yönetimi.
+     * **Yetki:** `shops.manage` — Mağaza bağlantısı yönetimi.
      *
      * `PATCH /v1/shops/{id}`
      *
@@ -8376,6 +8714,12 @@ trait Methods
      *         paused: int,
      *         currency: int,
      *     },
+     *     lastDelivery: array{
+     *         at: string,
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+     *     }|null,
+     *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+     *     pluginKey: array{id: string, prefix: string, name: string}|null,
      * }
      *
      * @throws RewloyException
@@ -8404,6 +8748,12 @@ trait Methods
          *         paused: int,
          *         currency: int,
          *     },
+         *     lastDelivery: array{
+         *         at: string,
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+         *     }|null,
+         *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+         *     pluginKey: array{id: string, prefix: string, name: string}|null,
          * } $data
          */
         $data = $this->call('setShopEnabled', $args);
@@ -8413,11 +8763,11 @@ trait Methods
     /**
      * Bağlantıyı sil
      *
-     * Bundan sonra gelen siparişler reddedilir; işlenmiş olanlar kartlarda kalır.
+     * Bundan sonra gelen siparişler reddedilir; işlenmiş olanlar kartlarda kalır. Bağlantı koduyla kurulduysa eklentinin anahtarı da iptal edilir (bu çağrıyı o anahtar yaptıysa, yanıttan sonra geçersizdir). Bağlantının programında `shops.manage` ister (ya da, geriye uyum için, `apikeys.manage`): bir bağlantı kartlara bakiye ekleyebildiği için Yönetici rolünde yoktur; "E-ticaret" rolünde vardır.
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
-     * **Yetki:** `apikeys.manage` — API anahtarı ve mağaza bağlantısı yönetimi.
+     * **Yetki:** `shops.manage` — Mağaza bağlantısı yönetimi.
      *
      * `DELETE /v1/shops/{id}`
      *
@@ -8443,11 +8793,11 @@ trait Methods
     /**
      * Bağlantının siparişleri
      *
-     * Kaydedilen siparişler, yeniden eskiye; `outcome` ile süzülür. Sipariş numarası mağazanınkidir; kişisel veri tutulmaz.
+     * Kaydedilen siparişler, yeniden eskiye; `outcome` ile süzülür. Sipariş numarası mağazanınkidir; kişisel veri tutulmaz. `shops.read` ister (ya da, geriye uyum için, `settings.read`).
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
-     * **Yetki:** `settings.read` — Ayarları görüntüleme.
+     * **Yetki:** `shops.read` — Mağaza bağlantılarını görüntüleme.
      *
      * `GET /v1/shops/{id}/orders`
      *
@@ -8491,6 +8841,264 @@ trait Methods
          * } $data
          */
         $data = $this->call('listShopOrders', $args);
+        return $data;
+    }
+
+    /**
+     * Bekleyen bağlantı kodları
+     *
+     * Henüz kullanılmamış, iptal edilmemiş ve süresi dolmamış bağlantı kodları (kodun kendisi değil: o yalnız oluşturulurken bir kez görünür).
+     *
+     * **Kimlik:** ekip oturumu.
+     *
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
+     *
+     * `GET /v1/shops/connect-tokens`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-listShopConnectTokens API referansı
+     *
+     * @param array{
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return list<array{
+     *     id: string,
+     *     programId: string,
+     *     programName: string,
+     *     rule: 'order'|'amount',
+     *     perAmountMinor: int,
+     *     step: int,
+     *     createdAt: string,
+     *     expiresAt: string,
+     *     createdBy: string|null,
+     * }>
+     *
+     * @throws RewloyException
+     */
+    public function listShopConnectTokens(array $args = []): array
+    {
+        /**
+         * @var list<array{
+         *     id: string,
+         *     programId: string,
+         *     programName: string,
+         *     rule: 'order'|'amount',
+         *     perAmountMinor: int,
+         *     step: int,
+         *     createdAt: string,
+         *     expiresAt: string,
+         *     createdBy: string|null,
+         * }> $data
+         */
+        $data = $this->call('listShopConnectTokens', $args);
+        return $data;
+    }
+
+    /**
+     * Mağaza eklentisi için bağlantı kodu al
+     *
+     * WooCommerce'teki Rewloy eklentisine yapıştırılacak **tek kullanımlık** kod. Eklenti onu `POST /v1/shops/connect` ile bir kez verir ve bir yanıtta bağlantıyı, bağlantının sırrını ve yalnız bu bağlantıya bağlı dar yetkili bir API anahtarını ("E-ticaret" rolü) alır; mağazada güçlü bir anahtar durmaz.
+     * - Kod **yalnız bu yanıtta** görünür; Rewloy yalnız özetini saklar. 15 dakika geçerlidir.
+     * - Kodu bir kişi alır (ekip oturumu; bir anahtar anahtar üretemez), `apikeys.manage`, kartın programında mağaza bağlantısı yetkisi ve — elle anahtar oluştururken olduğu gibi — `team.manage` ile (anahtarın yetkisi o kişiden verilen bir roldür; kişi E-ticaret rolünün yetkilerini tüm şubelerde taşımalıdır), `api` ve `ecommerce` özellikli bir planda. Kod bir API anahtarı ürettiği için kişinin şifresi yeniden istenir (`password`), anahtar oluştururken olduğu gibi. Bağlantı ve anahtar, kod kullanıldığı anda bu kişinin yetkileriyle kurulur: kişi o arada yetkisini kaybettiyse hiçbir şey kurulmaz.
+     * - Kural alanları `POST /v1/shops` ile aynıdır. En fazla 5 bağlantı ve aynı anda en fazla 5 bekleyen kod.
+     *
+     * **Kimlik:** ekip oturumu.
+     *
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
+     *
+     * `POST /v1/shops/connect-tokens`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-createShopConnectToken API referansı
+     *
+     * @param array{
+     *     body: array{
+     *         programId: string,
+     *         rule: 'order'|'amount',
+     *         perAmountMinor?: int,
+     *         step?: int,
+     *         password: string,
+     *     },
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     id: string,
+     *     programId: string,
+     *     programName: string,
+     *     rule: 'order'|'amount',
+     *     perAmountMinor: int,
+     *     step: int,
+     *     createdAt: string,
+     *     expiresAt: string,
+     *     createdBy: string|null,
+     *     token: string,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function createShopConnectToken(array $args): array
+    {
+        /**
+         * @var array{
+         *     id: string,
+         *     programId: string,
+         *     programName: string,
+         *     rule: 'order'|'amount',
+         *     perAmountMinor: int,
+         *     step: int,
+         *     createdAt: string,
+         *     expiresAt: string,
+         *     createdBy: string|null,
+         *     token: string,
+         * } $data
+         */
+        $data = $this->call('createShopConnectToken', $args);
+        return $data;
+    }
+
+    /**
+     * Bağlantı kodunu iptal et
+     *
+     * Bekleyen bir kodu hemen geçersiz kılar. Kullanılmış bir kodun kurduğu bağlantı ve anahtar bundan etkilenmez: onları `DELETE /v1/shops/{id}` kaldırır.
+     *
+     * **Kimlik:** ekip oturumu.
+     *
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
+     *
+     * `DELETE /v1/shops/connect-tokens/{id}`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-revokeShopConnectToken API referansı
+     *
+     * @param array{
+     *     params: array{id: string},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     *
+     * @throws RewloyException
+     */
+    public function revokeShopConnectToken(array $args): void
+    {
+        $this->call('revokeShopConnectToken', $args);
+    }
+
+    /**
+     * Bağlantı koduyla mağazayı bağla
+     *
+     * Mağaza eklentisinin tek adımı: paneldeki bağlantı kodunu (`rwc_…`) verir, karşılığında **bir kez** şunları alır: bağlantı (`shop`), bağlantının sırrı (`secret`, WooCommerce webhook'una yazılır) ve yalnız bu bağlantıya bağlı API anahtarı (`apiKey.token`). Kimlik istemez; kod kimliktir.
+     * - Kod **tek kullanımlıktır**: ikinci kez, süresi dolmuşken ya da iptal edilmişken aynı yanıtı alır: `404 CONNECT_TOKEN_INVALID` (hangisi olduğu söylenmez). Kurulum yarıda reddedilirse (ör. 5 bağlantı sınırı) kod harcanmaz.
+     * - Anahtar "E-ticaret" rolündedir ve bağlantının programıyla sınırlıdır: kartları ve ayarları görür, yalnız kendi bağlantısını görür ve yönetir, o programdan kart verir. Bağlantı silinince anahtar da iptal edilir. Test ortamının kodu `rwk_test_` anahtarı verir (`mode`).
+     * - `shopName` anahtarın panelde görünen adına eklenir ("WooCommerce · …"). IP başına 10 dakikada 20 istek.
+     *
+     * **Kimlik:** kimlik gerekmez.
+     *
+     * `POST /v1/shops/connect`
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-connectShop API referansı
+     *
+     * @param array{
+     *     body: array{token: string, shopName?: string},
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     shop: array{
+     *         id: string,
+     *         platform: 'shopify'|'woocommerce',
+     *         programId: string,
+     *         programName: string,
+     *         programType: string,
+     *         currency: string,
+     *         rule: 'order'|'amount',
+     *         perAmountMinor: int,
+     *         step: int,
+     *         enabled: bool,
+     *         lastOrderAt: string|null,
+     *         createdAt: string,
+     *         webhookUrl: string,
+     *         orders: array{
+     *             credited: int,
+     *             unmatched: int,
+     *             below: int,
+     *             paused: int,
+     *             currency: int,
+     *         },
+     *         lastDelivery: array{
+     *             at: string,
+     *             result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+     *         }|null,
+     *         lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+     *         pluginKey: array{id: string, prefix: string, name: string}|null,
+     *     },
+     *     secret: string,
+     *     apiKey: array{
+     *         id: string,
+     *         prefix: string,
+     *         name: string,
+     *         role: string,
+     *         token: string,
+     *     },
+     *     mode: 'live'|'test',
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function connectShop(array $args): array
+    {
+        /**
+         * @var array{
+         *     shop: array{
+         *         id: string,
+         *         platform: 'shopify'|'woocommerce',
+         *         programId: string,
+         *         programName: string,
+         *         programType: string,
+         *         currency: string,
+         *         rule: 'order'|'amount',
+         *         perAmountMinor: int,
+         *         step: int,
+         *         enabled: bool,
+         *         lastOrderAt: string|null,
+         *         createdAt: string,
+         *         webhookUrl: string,
+         *         orders: array{
+         *             credited: int,
+         *             unmatched: int,
+         *             below: int,
+         *             paused: int,
+         *             currency: int,
+         *         },
+         *         lastDelivery: array{
+         *             at: string,
+         *             result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+         *         }|null,
+         *         lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+         *         pluginKey: array{id: string, prefix: string, name: string}|null,
+         *     },
+         *     secret: string,
+         *     apiKey: array{
+         *         id: string,
+         *         prefix: string,
+         *         name: string,
+         *         role: string,
+         *         token: string,
+         *     },
+         *     mode: 'live'|'test',
+         * } $data
+         */
+        $data = $this->call('connectShop', $args);
         return $data;
     }
 
@@ -9063,7 +9671,7 @@ trait Methods
      *
      * **Kimlik:** ekip oturumu.
      *
-     * **Yetki:** `apikeys.manage` — API anahtarı ve mağaza bağlantısı yönetimi.
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
      *
      * `GET /v1/developers/keys`
      *
@@ -9093,6 +9701,7 @@ trait Methods
      *     stale: bool,
      *     actions30: int,
      *     refused30: int,
+     *     shopId: string|null,
      * }>
      *
      * @throws RewloyException
@@ -9116,6 +9725,7 @@ trait Methods
          *     stale: bool,
          *     actions30: int,
          *     refused30: int,
+         *     shopId: string|null,
          * }> $data
          */
         $data = $this->call('listApiKeys', $args);
@@ -9131,7 +9741,7 @@ trait Methods
      *
      * **Kimlik:** ekip oturumu.
      *
-     * **Yetki:** `apikeys.manage` — API anahtarı ve mağaza bağlantısı yönetimi.
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
      *
      * `POST /v1/developers/keys`
      *
@@ -9171,6 +9781,7 @@ trait Methods
      *         stale: bool,
      *         actions30: int,
      *         refused30: int,
+     *         shopId: string|null,
      *     },
      *     token: string,
      * }
@@ -9197,6 +9808,7 @@ trait Methods
          *         stale: bool,
          *         actions30: int,
          *         refused30: int,
+         *         shopId: string|null,
          *     },
          *     token: string,
          * } $data
@@ -9210,7 +9822,7 @@ trait Methods
      *
      * **Kimlik:** ekip oturumu.
      *
-     * **Yetki:** `apikeys.manage` — API anahtarı ve mağaza bağlantısı yönetimi.
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
      *
      * `GET /v1/developers/keys/{id}`
      *
@@ -9241,6 +9853,7 @@ trait Methods
      *     stale: bool,
      *     actions30: int,
      *     refused30: int,
+     *     shopId: string|null,
      * }
      *
      * @throws RewloyException
@@ -9264,6 +9877,7 @@ trait Methods
          *     stale: bool,
          *     actions30: int,
          *     refused30: int,
+         *     shopId: string|null,
          * } $data
          */
         $data = $this->call('getApiKey', $args);
@@ -9277,7 +9891,7 @@ trait Methods
      *
      * **Kimlik:** ekip oturumu.
      *
-     * **Yetki:** `apikeys.manage` — API anahtarı ve mağaza bağlantısı yönetimi.
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
      *
      * `DELETE /v1/developers/keys/{id}`
      *
@@ -9307,7 +9921,7 @@ trait Methods
      *
      * **Kimlik:** ekip oturumu.
      *
-     * **Yetki:** `apikeys.manage` — API anahtarı ve mağaza bağlantısı yönetimi.
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
      *
      * `GET /v1/developers/keys/{id}/requests`
      *
@@ -9727,6 +10341,193 @@ trait Methods
          * @var array{queued: true} $data
          */
         $data = $this->call('testWebhook', $args);
+        return $data;
+    }
+
+    /**
+     * Test ortamı
+     *
+     * İşletmenin test ortamı açık mı, hangisi, bu kişinin orada koltuğu var mı ve sınırlara göre ne kadar dolu. Gerçek işletmeden de test ortamının kendisinden de çağrılır.
+     *
+     * **Kimlik:** ekip oturumu.
+     *
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
+     *
+     * `GET /v1/test/environment`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-getTestEnvironment API referansı
+     *
+     * @param array{
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     inTest: bool,
+     *     real: array{id: string, name: string},
+     *     test: array{merchantId: string, name: string, createdAt: string}|null,
+     *     seated: bool,
+     *     outbox: int,
+     *     customers: int,
+     *     cards: int,
+     *     limits: array{customers: int, cards: int, outboxKept: int, outboxDays: int},
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function getTestEnvironment(array $args = []): array
+    {
+        /**
+         * @var array{
+         *     inTest: bool,
+         *     real: array{id: string, name: string},
+         *     test: array{merchantId: string, name: string, createdAt: string}|null,
+         *     seated: bool,
+         *     outbox: int,
+         *     customers: int,
+         *     cards: int,
+         *     limits: array{customers: int, cards: int, outboxKept: int, outboxDays: int},
+         * } $data
+         */
+        $data = $this->call('getTestEnvironment', $args);
+        return $data;
+    }
+
+    /**
+     * Test ortamını aç
+     *
+     * İşletmenin test ortamını açar: gerçek işletmeye bağlı ayrı bir işletme, adı " · Test" ile biter. Buradaki hiçbir şey müşterilere ulaşmaz: e-posta, bildirim, SMS ya da WhatsApp gönderilmez, hiçbir cüzdana kart eklenmez; gönderilecek olan "Gönderilmeyenler"e yazılır (`GET /v1/test/messages`). Webhook'lar teslim edilir.
+     * - Gerçek işletmenin sahipleri ve API anahtarı yöneten koltukları test ortamında aynı rolle koltuk alır. Test ortamının anahtarları `rwk_test_` ile başlar; oluşturmak için `Rewloy-Merchant` başlığında test ortamını seçip `POST /v1/developers/keys` çağırın.
+     * - Planı gerçek işletmenin planıdır; ücretlendirilmez. En fazla 1.000 müşteri ve 1.000 kart tutar.
+     * - Test ortamına gerçek müşteri verisi girmeyin.
+     *
+     * **Kimlik:** ekip oturumu.
+     *
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
+     *
+     * `POST /v1/test/environment`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-openTestEnvironment API referansı
+     *
+     * @param array{
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{merchantId: string, name: string, created: bool}
+     *
+     * @throws RewloyException
+     */
+    public function openTestEnvironment(array $args = []): array
+    {
+        /**
+         * @var array{merchantId: string, name: string, created: bool} $data
+         */
+        $data = $this->call('openTestEnvironment', $args);
+        return $data;
+    }
+
+    /**
+     * Test ortamını sıfırla
+     *
+     * Test ortamı kapanır ve yerine yenisi açılır: eski ortamın anahtarları hemen geçersiz olur, webhook'ları kapanır, koltukları askıya alınır; müşterileri, kartları ve "Gönderilmeyenler"i beklemeden ve geri dönülmez biçimde silinir. Yeni ortam için yeni anahtar oluşturun. Açık bir test ortamı yoksa yalnız yenisi açılır. Bir işletme günde en fazla 5 kez sıfırlar (`429 RATE_LIMITED`).
+     *
+     * **Kimlik:** ekip oturumu.
+     *
+     * **Yetki:** `apikeys.manage` — API anahtarı yönetimi.
+     *
+     * `POST /v1/test/environment/reset`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-resetTestEnvironment API referansı
+     *
+     * @param array{
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{merchantId: string, name: string, closed: string|null}
+     *
+     * @throws RewloyException
+     */
+    public function resetTestEnvironment(array $args = []): array
+    {
+        /**
+         * @var array{merchantId: string, name: string, closed: string|null} $data
+         */
+        $data = $this->call('resetTestEnvironment', $args);
+        return $data;
+    }
+
+    /**
+     * Gönderilmeyenler
+     *
+     * Test ortamının göndermediği mesajlar, yeniden eskiye: e-postalar (konusu ve metniyle), Rewloy Cüzdan bildirimleri, kampanya ve otomasyonların kartlara giden mesajları ve "ödülünüz hazır" anları. Alıcı maskelidir.
+     * - Yalnız test ortamının kimliğiyle çağrılır (`rwk_test_` anahtarı ya da test ortamını seçen ekip oturumu); gerçek işletmenin kimliği `403 TEST_ENV_ONLY` alır. Mesajlar müşterilere yazıldığı için `customers.read` yetkisi ister.
+     * - Kart bağlantılarındaki görüntüleme anahtarı saklanmaz: bağlantı `?k=…` olarak görünür.
+     * - Test ortamı başına son 500 mesaj, 30 gün tutulur.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `customers.read` — Müşterileri görüntüleme.
+     *
+     * `GET /v1/test/messages`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-listTestMessages API referansı
+     *
+     * @param array{
+     *     query?: array{page?: int|null, limit?: int|null},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     data: list<array{
+     *         id: string,
+     *         kind: string,
+     *         channel: 'mail'|'push'|'sms'|'whatsapp'|'wallet',
+     *         recipient: string,
+     *         subject: string,
+     *         body: string,
+     *         card: string|null,
+     *         customerId: string|null,
+     *         at: string,
+     *     }>,
+     *     meta: array{page: int, pageSize: int, total: int},
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function listTestMessages(array $args = []): array
+    {
+        /**
+         * @var array{
+         *     data: list<array{
+         *         id: string,
+         *         kind: string,
+         *         channel: 'mail'|'push'|'sms'|'whatsapp'|'wallet',
+         *         recipient: string,
+         *         subject: string,
+         *         body: string,
+         *         card: string|null,
+         *         customerId: string|null,
+         *         at: string,
+         *     }>,
+         *     meta: array{page: int, pageSize: int, total: int},
+         * } $data
+         */
+        $data = $this->call('listTestMessages', $args);
         return $data;
     }
 
@@ -10349,257 +11150,6 @@ trait Methods
          * } $data
          */
         $data = $this->call('reportBug', $args);
-        return $data;
-    }
-
-    // ------------------------------------------------------------ Katılım
-
-    /**
-     * Katılım formu
-     *
-     * Bir programın katılım formunu kendi uygulamanızda çizmek için: işletme ve program adı, türü, e-postadan başka sorulan alanlar (zorunlu mu), renkler ve görseller. Kimlik istemez.
-     *
-     * **Kimlik:** kimlik gerekmez, kart sahibi oturumu, ekip oturumu, API anahtarı.
-     *
-     * `GET /v1/public/programs/{id}`
-     *
-     * Arguments:
-     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
-     *
-     * @see https://rewloy.com/gelistiriciler/api#op-publicProgram API referansı
-     *
-     * @param array{
-     *     params: array{id: string},
-     *     merchant?: string|null,
-     *     timeout?: int|float|null,
-     *     maxRetries?: int|null,
-     * } $args
-     * @return array{
-     *     programId: string,
-     *     businessName: string,
-     *     programName: string,
-     *     type: string,
-     *     fields: list<array{id: 'firstName'|'lastName'|'phone'|'birthday', required: bool}>,
-     *     colors: array{
-     *         background: string,
-     *         foreground: string,
-     *         label: string,
-     *         accent: string,
-     *     },
-     *     logoUrl: string,
-     *     bannerUrl: string|null,
-     *     joinUrl: string,
-     *     privacyUrl: string,
-     * }
-     *
-     * @throws RewloyException
-     */
-    public function publicProgram(array $args): array
-    {
-        /**
-         * @var array{
-         *     programId: string,
-         *     businessName: string,
-         *     programName: string,
-         *     type: string,
-         *     fields: list<array{id: 'firstName'|'lastName'|'phone'|'birthday', required: bool}>,
-         *     colors: array{
-         *         background: string,
-         *         foreground: string,
-         *         label: string,
-         *         accent: string,
-         *     },
-         *     logoUrl: string,
-         *     bannerUrl: string|null,
-         *     joinUrl: string,
-         *     privacyUrl: string,
-         * } $data
-         */
-        $data = $this->call('publicProgram', $args);
-        return $data;
-    }
-
-    /**
-     * Programa katıl
-     *
-     * Kişi kendi kartını alır; kartın bağlantısı e-postasına da gider (sekme kapansa da kart kaybolmaz). Aynı e-postanın bu programda zaten kartı varsa yeni kart verilmez, mevcut kartın bağlantısı **yalnız kişinin e-postasına** gider (`created: false`). Formun zorunlu alanları `GET /v1/public/programs/{id}` ile öğrenilir. IP başına 10 dakikada 30.
-     *
-     * **Kimlik:** kimlik gerekmez, kart sahibi oturumu, ekip oturumu, API anahtarı.
-     *
-     * `POST /v1/public/programs/{id}/join`
-     *
-     * Arguments:
-     * - `body.birthday`: YYYY-AA-GG
-     * - `body.kvkkConsent`: Kişiye işletmenin aydınlatma metni sunuldu (işletmenin beyanı; doğruluğundan işletme sorumludur). Bunu bir rıza kutusu olarak sormayın.
-     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
-     *
-     * @see https://rewloy.com/gelistiriciler/api#op-joinProgram API referansı
-     *
-     * @param array{
-     *     params: array{id: string},
-     *     body: array{
-     *         email: string,
-     *         firstName?: string,
-     *         lastName?: string,
-     *         phone?: string,
-     *         birthday?: string,
-     *         kvkkConsent: true,
-     *     },
-     *     merchant?: string|null,
-     *     timeout?: int|float|null,
-     *     maxRetries?: int|null,
-     * } $args
-     * @return array{created: bool, serial: string|null, cardUrl: string|null}
-     *
-     * @throws RewloyException
-     */
-    public function joinProgram(array $args): array
-    {
-        /**
-         * @var array{created: bool, serial: string|null, cardUrl: string|null} $data
-         */
-        $data = $this->call('joinProgram', $args);
-        return $data;
-    }
-
-    /**
-     * Bir kod
-     *
-     * Hediye kartı, kupon ya da indirim kodunun ne verdiği ve hâlâ alınıp alınamayacağı. Kimlik istemez; yalnız kodu bilen birinin öğrenebileceği kadarını söyler.
-     *
-     * **Kimlik:** kimlik gerekmez, kart sahibi oturumu, ekip oturumu, API anahtarı.
-     *
-     * `GET /v1/public/codes/{code}`
-     *
-     * Arguments:
-     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
-     *
-     * @see https://rewloy.com/gelistiriciler/api#op-publicCode API referansı
-     *
-     * @param array{
-     *     params: array{code: string},
-     *     merchant?: string|null,
-     *     timeout?: int|float|null,
-     *     maxRetries?: int|null,
-     * } $args
-     * @return array{
-     *     code: string,
-     *     name: string,
-     *     type: 'giftcard'|'voucher'|'discount',
-     *     businessName: string,
-     *     valueMinor: int|null,
-     *     currency: string|null,
-     *     offerText: string|null,
-     *     percent: int|null,
-     *     usage: 'once'|'limited'|'unlimited',
-     *     usageLimit: int|null,
-     *     validUntil: string|null,
-     *     fields: list<array{id: 'firstName'|'lastName'|'phone'|'birthday', required: bool}>,
-     *     claimable: bool,
-     *     reason: 'closed'|'full'|'expired'|null,
-     * }
-     *
-     * @throws RewloyException
-     */
-    public function publicCode(array $args): array
-    {
-        /**
-         * @var array{
-         *     code: string,
-         *     name: string,
-         *     type: 'giftcard'|'voucher'|'discount',
-         *     businessName: string,
-         *     valueMinor: int|null,
-         *     currency: string|null,
-         *     offerText: string|null,
-         *     percent: int|null,
-         *     usage: 'once'|'limited'|'unlimited',
-         *     usageLimit: int|null,
-         *     validUntil: string|null,
-         *     fields: list<array{id: 'firstName'|'lastName'|'phone'|'birthday', required: bool}>,
-         *     claimable: bool,
-         *     reason: 'closed'|'full'|'expired'|null,
-         * } $data
-         */
-        $data = $this->call('publicCode', $args);
-        return $data;
-    }
-
-    /**
-     * Kodu kullan, kartı al
-     *
-     * Kişi koddan kartını alır. Kişi başına sınır dolduysa `ALREADY_CLAIMED` döner ve mevcut kartın bağlantısı **yalnız kişinin e-postasına** gider. IP başına 10 dakikada 30.
-     *
-     * **Kimlik:** kimlik gerekmez, kart sahibi oturumu, ekip oturumu, API anahtarı.
-     *
-     * `POST /v1/public/codes/{code}/claim`
-     *
-     * Arguments:
-     * - `body.birthday`: YYYY-AA-GG
-     * - `body.kvkkConsent`: Kişiye işletmenin aydınlatma metni sunuldu (işletmenin beyanı; doğruluğundan işletme sorumludur). Bunu bir rıza kutusu olarak sormayın.
-     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
-     *
-     * @see https://rewloy.com/gelistiriciler/api#op-claimCode API referansı
-     *
-     * @param array{
-     *     params: array{code: string},
-     *     body: array{
-     *         email: string,
-     *         firstName?: string,
-     *         lastName?: string,
-     *         phone?: string,
-     *         birthday?: string,
-     *         kvkkConsent: true,
-     *     },
-     *     merchant?: string|null,
-     *     timeout?: int|float|null,
-     *     maxRetries?: int|null,
-     * } $args
-     * @return array{serial: string, cardUrl: string}
-     *
-     * @throws RewloyException
-     */
-    public function claimCode(array $args): array
-    {
-        /**
-         * @var array{serial: string, cardUrl: string} $data
-         */
-        $data = $this->call('claimCode', $args);
-        return $data;
-    }
-
-    /**
-     * Kart bağlantımı e-postama gönder
-     *
-     * Kart yazılan adrese kayıtlıysa bağlantısı o adrese gider. Yanıt her durumda aynıdır (kartın kime ait olduğu sızmaz). IP başına saatte 10, kart başına saatte 3.
-     *
-     * **Kimlik:** kimlik gerekmez, kart sahibi oturumu, ekip oturumu, API anahtarı.
-     *
-     * `POST /v1/public/cards/{serial}/email-link`
-     *
-     * Arguments:
-     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
-     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
-     *
-     * @see https://rewloy.com/gelistiriciler/api#op-emailCardLink API referansı
-     *
-     * @param array{
-     *     params: array{serial: string},
-     *     body: array{email: string},
-     *     merchant?: string|null,
-     *     timeout?: int|float|null,
-     *     maxRetries?: int|null,
-     * } $args
-     * @return array{accepted: true}
-     *
-     * @throws RewloyException
-     */
-    public function emailCardLink(array $args): array
-    {
-        /**
-         * @var array{accepted: true} $data
-         */
-        $data = $this->call('emailCardLink', $args);
         return $data;
     }
 

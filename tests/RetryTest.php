@@ -149,7 +149,7 @@ final class RetryTest extends TestCase
     {
         $stub = $this->stub(static fn (): HttpResponse => Api::json(503, Api::error('INTERNAL', 503, 'busy')));
         $c = $this->client($stub);
-        self::assertSame(503, self::caught(static fn () => $c->issuePass(['body' => ['programId' => Api::LOCATION]]))->status);
+        self::assertSame(503, self::caught(static fn () => $c->createSegment(['body' => ['name' => 'Sabit müşteriler', 'rule' => ['minVisits' => 3]]]))->status);
         self::assertCount(1, $stub->requests);
         self::caught(static fn () => $c->updateProgram(['params' => ['id' => Api::LOCATION], 'body' => []]));
         self::assertCount(2, $stub->requests);
@@ -212,11 +212,11 @@ final class RetryTest extends TestCase
         $c = $this->client($stub);
         self::assertSame(['ok' => true], $c->getPass(['params' => ['serial' => Api::SERIAL]]));
         self::assertCount(1, $this->sleeps->waits);
-        $e = self::caught(static fn () => $c->issuePass(['body' => ['programId' => Api::LOCATION]]), ConnectionException::class);
+        $e = self::caught(static fn () => $c->createSegment(['body' => ['name' => 'Sabit müşteriler', 'rule' => ['minVisits' => 3]]]), ConnectionException::class);
         self::assertSame(0, $e->status);
         self::assertSame('CONNECTION_ERROR', $e->errorCode);
         self::assertSame('Connection reset by peer', $e->detail);
-        self::assertSame('issuePass', $e->operation);
+        self::assertSame('createSegment', $e->operation);
         self::assertInstanceOf(TransportException::class, $e->getPrevious());
         self::assertCount(3, $stub->requests);
     }

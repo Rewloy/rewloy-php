@@ -42,6 +42,7 @@ final class ErrorCode
     public const UNAUTHENTICATED = 'UNAUTHENTICATED';
     /** API anahtarı geçersiz */
     public const INVALID_API_KEY = 'INVALID_API_KEY';
+    public const KEY_MODE_MISMATCH = 'KEY_MODE_MISMATCH';
     /** Oturum ya da bağlantı geçersiz */
     public const TOKEN_INVALID = 'TOKEN_INVALID';
     /** Bu adımın süresi doldu */
@@ -152,6 +153,12 @@ final class ErrorCode
     public const WEBHOOK_NOT_FOUND = 'WEBHOOK_NOT_FOUND';
     /** Mağaza bağlantısı bulunamadı */
     public const SHOP_NOT_FOUND = 'SHOP_NOT_FOUND';
+    /** Bağlantı bu programın değil */
+    public const SHOP_PROGRAM_MISMATCH = 'SHOP_PROGRAM_MISMATCH';
+    /** Bağlantı kodu geçersiz */
+    public const CONNECT_TOKEN_INVALID = 'CONNECT_TOKEN_INVALID';
+    /** Bekleyen bağlantı kodu bulunamadı */
+    public const CONNECT_TOKEN_NOT_FOUND = 'CONNECT_TOKEN_NOT_FOUND';
     /** Destek talebi bulunamadı */
     public const TICKET_NOT_FOUND = 'TICKET_NOT_FOUND';
     /** Bildirim bulunamadı */
@@ -261,6 +268,16 @@ final class ErrorCode
     /** Talep kapandı */
     public const TICKET_CLOSED = 'TICKET_CLOSED';
     public const SELF_CHANGE = 'SELF_CHANGE';
+    /** Test ortamı ile gerçek işletme karışmaz */
+    public const TEST_MODE_MISMATCH = 'TEST_MODE_MISMATCH';
+    /** Yalnız test ortamında */
+    public const TEST_ENV_ONLY = 'TEST_ENV_ONLY';
+    /** Test ortamı gerçek işletmeden açılır */
+    public const TEST_ENV_NESTED = 'TEST_ENV_NESTED';
+    public const TEST_ENV_NO_INVITE = 'TEST_ENV_NO_INVITE';
+    /** Test ortamı dolu */
+    public const TEST_LIMIT_REACHED = 'TEST_LIMIT_REACHED';
+    public const TEST_CARD_NO_WALLET = 'TEST_CARD_NO_WALLET';
     /** Anahtar ayarı geçersiz */
     public const INVALID_KEY = 'INVALID_KEY';
     /** Webhook adresi kabul edilmedi */
@@ -297,6 +314,7 @@ final class ErrorCode
         'CROSS_SITE',
         'UNAUTHENTICATED',
         'INVALID_API_KEY',
+        'KEY_MODE_MISMATCH',
         'TOKEN_INVALID',
         'FLOW_EXPIRED',
         'PASSKEY_REFUSED',
@@ -357,6 +375,9 @@ final class ErrorCode
         'KEY_NOT_FOUND',
         'WEBHOOK_NOT_FOUND',
         'SHOP_NOT_FOUND',
+        'SHOP_PROGRAM_MISMATCH',
+        'CONNECT_TOKEN_INVALID',
+        'CONNECT_TOKEN_NOT_FOUND',
         'TICKET_NOT_FOUND',
         'NOTIFICATION_NOT_FOUND',
         'EXPORT_NOT_FOUND',
@@ -414,6 +435,12 @@ final class ErrorCode
         'ACCOUNT_EXISTS',
         'TICKET_CLOSED',
         'SELF_CHANGE',
+        'TEST_MODE_MISMATCH',
+        'TEST_ENV_ONLY',
+        'TEST_ENV_NESTED',
+        'TEST_ENV_NO_INVITE',
+        'TEST_LIMIT_REACHED',
+        'TEST_CARD_NO_WALLET',
         'INVALID_KEY',
         'BAD_WEBHOOK_URL',
         'ALREADY_CLOSED',
@@ -493,6 +520,9 @@ final class ErrorCode
         'KEY_NOT_FOUND' => 'API anahtarı bulunamadı',
         'WEBHOOK_NOT_FOUND' => 'Webhook bulunamadı',
         'SHOP_NOT_FOUND' => 'Mağaza bağlantısı bulunamadı',
+        'SHOP_PROGRAM_MISMATCH' => 'Bağlantı bu programın değil',
+        'CONNECT_TOKEN_INVALID' => 'Bağlantı kodu geçersiz',
+        'CONNECT_TOKEN_NOT_FOUND' => 'Bekleyen bağlantı kodu bulunamadı',
         'TICKET_NOT_FOUND' => 'Destek talebi bulunamadı',
         'NOTIFICATION_NOT_FOUND' => 'Bildirim bulunamadı',
         'SESSION_NOT_FOUND' => 'Oturum bulunamadı',
@@ -545,6 +575,10 @@ final class ErrorCode
         'PLACE_CHOICE' => 'Birden fazla yer eşleşti',
         'ACCOUNT_EXISTS' => 'Bu e-postayla hesap var',
         'TICKET_CLOSED' => 'Talep kapandı',
+        'TEST_MODE_MISMATCH' => 'Test ortamı ile gerçek işletme karışmaz',
+        'TEST_ENV_ONLY' => 'Yalnız test ortamında',
+        'TEST_ENV_NESTED' => 'Test ortamı gerçek işletmeden açılır',
+        'TEST_LIMIT_REACHED' => 'Test ortamı dolu',
         'INVALID_KEY' => 'Anahtar ayarı geçersiz',
         'BAD_WEBHOOK_URL' => 'Webhook adresi kabul edilmedi',
     ];
