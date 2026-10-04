@@ -1,0 +1,19 @@
+# PHPStan at its strictest level (max = 10 on PHPStan 2): the hand-written
+# code, the generated code (its PHPDoc shapes are what users' tools read, so
+# they must parse and hold), the generator and the tests.
+parameters:
+    level: max
+    paths:
+        - src
+        - scripts
+        - tests
+    tmpDir: build/phpstan
+    checkUninitializedProperties: true
+    # A test's properties are set in setUp(), PHPUnit's constructor in all but name.
+    additionalConstructors:
+        - PHPUnit\Framework\TestCase::setUp
+    checkBenevolentUnionTypes: true
+    reportPossiblyNonexistentGeneralArrayOffset: true
+    reportPossiblyNonexistentConstantArrayOffset: true
+    reportAnyTypeWideningInVarTag: true
+    reportUnmatchedIgnoredErrors: true
