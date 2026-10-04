@@ -30,6 +30,7 @@ final class ErrorCode
     public const IDEMPOTENCY_IN_PROGRESS = 'IDEMPOTENCY_IN_PROGRESS';
     /** Onay gerekli */
     public const CONFIRM_REQUIRED = 'CONFIRM_REQUIRED';
+    /** Gerekçe gerekli */
     public const REASON_REQUIRED = 'REASON_REQUIRED';
     /** Bulunamadı */
     public const NOT_FOUND = 'NOT_FOUND';
@@ -49,7 +50,7 @@ final class ErrorCode
     public const FLOW_EXPIRED = 'FLOW_EXPIRED';
     /** Passkey doğrulanamadı */
     public const PASSKEY_REFUSED = 'PASSKEY_REFUSED';
-    /** Giriş kodu yanlış */
+    /** Kod yanlış ya da geçersiz */
     public const CODE_INVALID = 'CODE_INVALID';
     /** Bu adres ya da numara için kod girişi kapandı */
     public const CODE_LOCKED = 'CODE_LOCKED';
@@ -105,7 +106,7 @@ final class ErrorCode
     public const UNAUTHORIZED = 'UNAUTHORIZED';
     /** Yetki yok */
     public const FORBIDDEN = 'FORBIDDEN';
-    /** Bu şube kapsamınız dışında */
+    /** Bu şube ya da program kapsamınız dışında */
     public const OUT_OF_SCOPE = 'OUT_OF_SCOPE';
     /** Planınızda yok */
     public const PLAN_FEATURE_MISSING = 'PLAN_FEATURE_MISSING';
@@ -159,6 +160,48 @@ final class ErrorCode
     public const CONNECT_TOKEN_INVALID = 'CONNECT_TOKEN_INVALID';
     /** Bekleyen bağlantı kodu bulunamadı */
     public const CONNECT_TOKEN_NOT_FOUND = 'CONNECT_TOKEN_NOT_FOUND';
+    /** Bağlantının eklenti anahtarı yok */
+    public const NO_PLUGIN_KEY = 'NO_PLUGIN_KEY';
+    /** Kodun süresi doldu */
+    public const CODE_EXPIRED = 'CODE_EXPIRED';
+    /** Kod başka yerde kullanıldı */
+    public const CODE_USED = 'CODE_USED';
+    /** Davet için giriş gerekli */
+    public const INVITE_SIGN_IN = 'INVITE_SIGN_IN';
+    /** Davet başka bir adrese */
+    public const INVITE_OTHER_ACCOUNT = 'INVITE_OTHER_ACCOUNT';
+    /** Kodun bu siparişteki ayırması sona erdi */
+    public const CODE_RELEASED = 'CODE_RELEASED';
+    /** Bu kart bu mağazada kullanılmıyor */
+    public const CODE_NOT_ACCEPTED_HERE = 'CODE_NOT_ACCEPTED_HERE';
+    /** Para birimi farklı */
+    public const CURRENCY_MISMATCH = 'CURRENCY_MISMATCH';
+    /** Bağlantı kapalı */
+    public const SHOP_PAUSED = 'SHOP_PAUSED';
+    /** Kupon yalnız mağazada geçer */
+    public const VOUCHER_NOT_ONLINE = 'VOUCHER_NOT_ONLINE';
+    /** Kart online kullanılamıyor */
+    public const NOT_ONLINE = 'NOT_ONLINE';
+    /** Açık kod sınırı */
+    public const TOO_MANY_CODES = 'TOO_MANY_CODES';
+    /** Kod bir siparişe bağlandı */
+    public const CODE_ATTACHED = 'CODE_ATTACHED';
+    /** Kod bulunamadı */
+    public const CODE_NOT_FOUND = 'CODE_NOT_FOUND';
+    /** Kart bu siparişte zaten var */
+    public const CARD_IN_ORDER = 'CARD_IN_ORDER';
+    /** Siparişteki kod sınırı */
+    public const ORDER_CODES_LIMIT = 'ORDER_CODES_LIMIT';
+    /** Ayırma karşılıksız kaldı */
+    public const HOLD_UNBACKED = 'HOLD_UNBACKED';
+    /** Kod kullanımı bulunamadı */
+    public const REDEMPTION_NOT_FOUND = 'REDEMPTION_NOT_FOUND';
+    /** İade tutarı fazla */
+    public const REFUND_TOO_LARGE = 'REFUND_TOO_LARGE';
+    /** İade edilecek bakiye yok */
+    public const NOT_REFUNDABLE = 'NOT_REFUNDABLE';
+    /** Ayrılmış değil */
+    public const NOT_HELD = 'NOT_HELD';
     /** Destek talebi bulunamadı */
     public const TICKET_NOT_FOUND = 'TICKET_NOT_FOUND';
     /** Bildirim bulunamadı */
@@ -378,6 +421,27 @@ final class ErrorCode
         'SHOP_PROGRAM_MISMATCH',
         'CONNECT_TOKEN_INVALID',
         'CONNECT_TOKEN_NOT_FOUND',
+        'NO_PLUGIN_KEY',
+        'CODE_EXPIRED',
+        'CODE_USED',
+        'INVITE_SIGN_IN',
+        'INVITE_OTHER_ACCOUNT',
+        'CODE_RELEASED',
+        'CODE_NOT_ACCEPTED_HERE',
+        'CURRENCY_MISMATCH',
+        'SHOP_PAUSED',
+        'VOUCHER_NOT_ONLINE',
+        'NOT_ONLINE',
+        'TOO_MANY_CODES',
+        'CODE_ATTACHED',
+        'CODE_NOT_FOUND',
+        'CARD_IN_ORDER',
+        'ORDER_CODES_LIMIT',
+        'HOLD_UNBACKED',
+        'REDEMPTION_NOT_FOUND',
+        'REFUND_TOO_LARGE',
+        'NOT_REFUNDABLE',
+        'NOT_HELD',
         'TICKET_NOT_FOUND',
         'NOTIFICATION_NOT_FOUND',
         'EXPORT_NOT_FOUND',
@@ -465,6 +529,7 @@ final class ErrorCode
         'IDEMPOTENCY_KEY_REUSED' => 'Anahtar başka bir istekte kullanılmış',
         'IDEMPOTENCY_IN_PROGRESS' => 'Aynı istek hâlâ işleniyor',
         'CONFIRM_REQUIRED' => 'Onay gerekli',
+        'REASON_REQUIRED' => 'Gerekçe gerekli',
         'NOT_FOUND' => 'Bulunamadı',
         'RATE_LIMITED' => 'İstek sınırı aşıldı',
         'INTERNAL' => 'Beklenmeyen hata',
@@ -473,7 +538,7 @@ final class ErrorCode
         'TOKEN_INVALID' => 'Oturum ya da bağlantı geçersiz',
         'FLOW_EXPIRED' => 'Bu adımın süresi doldu',
         'PASSKEY_REFUSED' => 'Passkey doğrulanamadı',
-        'CODE_INVALID' => 'Giriş kodu yanlış',
+        'CODE_INVALID' => 'Kod yanlış ya da geçersiz',
         'CODE_LOCKED' => 'Bu adres ya da numara için kod girişi kapandı',
         'PHONE_BUSY' => 'Bu yoldan kod gönderimi bugün için dolu',
         'LAST_WAY_IN' => 'Hesaba girmenin son yolu',
@@ -497,7 +562,7 @@ final class ErrorCode
         'CREDENTIAL_NOT_ALLOWED' => 'Bu kimlik türü bu uç noktayı kullanamaz',
         'MERCHANT_REQUIRED' => 'Hangi işletme?',
         'FORBIDDEN' => 'Yetki yok',
-        'OUT_OF_SCOPE' => 'Bu şube kapsamınız dışında',
+        'OUT_OF_SCOPE' => 'Bu şube ya da program kapsamınız dışında',
         'PLAN_FEATURE_MISSING' => 'Planınızda yok',
         'READ_ONLY' => 'Hesap salt-okunur',
         'SEAT_LIMIT' => 'Koltuk sınırı doldu',
@@ -523,6 +588,27 @@ final class ErrorCode
         'SHOP_PROGRAM_MISMATCH' => 'Bağlantı bu programın değil',
         'CONNECT_TOKEN_INVALID' => 'Bağlantı kodu geçersiz',
         'CONNECT_TOKEN_NOT_FOUND' => 'Bekleyen bağlantı kodu bulunamadı',
+        'NO_PLUGIN_KEY' => 'Bağlantının eklenti anahtarı yok',
+        'CODE_EXPIRED' => 'Kodun süresi doldu',
+        'CODE_USED' => 'Kod başka yerde kullanıldı',
+        'INVITE_SIGN_IN' => 'Davet için giriş gerekli',
+        'INVITE_OTHER_ACCOUNT' => 'Davet başka bir adrese',
+        'CODE_RELEASED' => 'Kodun bu siparişteki ayırması sona erdi',
+        'CODE_NOT_ACCEPTED_HERE' => 'Bu kart bu mağazada kullanılmıyor',
+        'CURRENCY_MISMATCH' => 'Para birimi farklı',
+        'SHOP_PAUSED' => 'Bağlantı kapalı',
+        'VOUCHER_NOT_ONLINE' => 'Kupon yalnız mağazada geçer',
+        'NOT_ONLINE' => 'Kart online kullanılamıyor',
+        'TOO_MANY_CODES' => 'Açık kod sınırı',
+        'CODE_ATTACHED' => 'Kod bir siparişe bağlandı',
+        'CODE_NOT_FOUND' => 'Kod bulunamadı',
+        'CARD_IN_ORDER' => 'Kart bu siparişte zaten var',
+        'ORDER_CODES_LIMIT' => 'Siparişteki kod sınırı',
+        'HOLD_UNBACKED' => 'Ayırma karşılıksız kaldı',
+        'REDEMPTION_NOT_FOUND' => 'Kod kullanımı bulunamadı',
+        'REFUND_TOO_LARGE' => 'İade tutarı fazla',
+        'NOT_REFUNDABLE' => 'İade edilecek bakiye yok',
+        'NOT_HELD' => 'Ayrılmış değil',
         'TICKET_NOT_FOUND' => 'Destek talebi bulunamadı',
         'NOTIFICATION_NOT_FOUND' => 'Bildirim bulunamadı',
         'SESSION_NOT_FOUND' => 'Oturum bulunamadı',

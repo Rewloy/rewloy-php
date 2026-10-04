@@ -112,7 +112,7 @@ trait Methods
     /**
      * Bir kartın durumu
      *
-     * Bakiye, ilerleme, ödül hazırlığı ve seviye — müşterinin cüzdanında gördüğüyle aynı.
+     * Bakiye, ilerleme, ödül hazırlığı ve seviye — müşterinin cüzdanında gördüğüyle aynı. `actions` kartın türünün aldığı kasa işlemlerini ve şimdi yapılıp yapılamayacaklarını, `sale` bir satışın bu kartta ne yazacağını söyler.
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
@@ -146,6 +146,12 @@ trait Methods
      *     nextTier?: mixed,
      *     nextReward?: mixed,
      *     updatedAt: string,
+     *     actions: list<array{
+     *         action: 'earn-stamps'|'redeem-stamps'|'earn-points'|'redeem-reward'|'visit'|'spend'|'accrue'|'use'|'load'|'spend-points',
+     *         needs: list<'amountMinor'|'points'|'rewardIndex'>,
+     *         ready: bool,
+     *     }>,
+     *     sale: array{writes: 'stamps'|'points'|'visit'|'cashback'|'none'},
      * }
      *
      * @throws RewloyException
@@ -167,6 +173,12 @@ trait Methods
          *     nextTier?: mixed,
          *     nextReward?: mixed,
          *     updatedAt: string,
+         *     actions: list<array{
+         *         action: 'earn-stamps'|'redeem-stamps'|'earn-points'|'redeem-reward'|'visit'|'spend'|'accrue'|'use'|'load'|'spend-points',
+         *         needs: list<'amountMinor'|'points'|'rewardIndex'>,
+         *         ready: bool,
+         *     }>,
+         *     sale: array{writes: 'stamps'|'points'|'visit'|'cashback'|'none'},
          * } $data
          */
         $data = $this->call('getPass', $args);
@@ -176,7 +188,7 @@ trait Methods
     /**
      * Kartın bir şubedeki kasa kuralları
      *
-     * Kasada işlem yapmadan önce: kart bu şubede kullanılabilir mi, hangi şubelerde geçerli, şu an burada hangi kasa kampanyası çalışıyor ve kasiyerin göreceği uyarılar (tarayıcıdaki şeritlerin aynısı). `allowed: false` iken işlem `WRONG_LOCATION` ile reddedilir (ADR 139).
+     * Kasada işlem yapmadan önce: kart bu şubede kullanılabilir mi, hangi şubelerde geçerli, şu an burada hangi kasa kampanyası çalışıyor ve kasiyerin göreceği uyarılar (tarayıcıdaki şeritlerin aynısı). `allowed: false` iken işlem `WRONG_LOCATION` ile reddedilir (ADR 139). Şube kartın işletmesinin silinmemiş bir şubesi olmalıdır, değilse `404 LOCATION_NOT_FOUND` (kasa işlemleri gibi).
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
@@ -235,7 +247,7 @@ trait Methods
     /**
      * Kasada işlem
      *
-     * Karta, bir şubede kasa işlemi uygular. **Idempotency-Key zorunludur**: aynı anahtarla tekrar, bakiyeyi ikinci kez değiştirmez ve ilk sonucu döndürür (`duplicate: true`). Salt-okunur hesapta da çalışır: mevcut kartlar çalışmaya devam eder.
+     * Karta, bir şubede kasa işlemi uygular. **Idempotency-Key zorunludur** (8–64 karakter, bu kimlik için kalıcı olarak tekil): aynı anahtarla aynı işlemin tekrarı bakiyeyi ikinci kez değiştirmez ve ilk sonucu döndürür (`duplicate: true`); bu kartta başka bir işlem için kullanılmış bir anahtar `422 IDEMPOTENCY_KEY_REUSED` alır. Şube işletmenizin silinmemiş bir şubesi olmalıdır (`404 LOCATION_NOT_FOUND`). Salt-okunur hesapta da çalışır: mevcut kartlar çalışmaya devam eder.
      * | action | kart | gerekli alan |
      * |---|---|---|
      * | `earn-stamps` | damga | `count` (varsayılan 1) |
@@ -299,6 +311,83 @@ trait Methods
          * } $data
          */
         $data = $this->call('passAction', $args);
+        return $data;
+    }
+
+    /**
+     * Satışı karta yaz
+     *
+     * Kasada ya da kendi yazılımınızda tamamlanan bir satışı karta yazar: ne yazılacağına kartın türü ve programın kendi kuralı karar verir, entegrasyonun türü bilmesi gerekmez (ADR 177). `amountMinor` ödenen toplamdır, işletmenin para biriminde ve kuruş cinsinden; başka para birimi kabul edilmez ve çevrilmez.
+     * | kart | satış ne yazar | `applied` |
+     * |---|---|---|
+     * | damga | 1 damga (kasa kampanyası katlar) | `stamps` |
+     * | puan | programın oranıyla, her 1 birim için `earnRate` puan | `points` |
+     * | VIP | 1 ziyaret, ziyaret penceresinde bir kez | `visit` |
+     * | cashback | toplamın `cashbackRate` yüzdesi | `cashback` |
+     * | hediye kartı, kupon, indirim | hiçbir şey (harcamak ve kullanmak `POST /v1/passes/{serial}/actions` ile) | `none` |
+     *
+     * Hiçbir şey yazılmadıysa yanıt yine 200'dür, `applied: "none"` ve nedeni `reason`: `below_minimum` (tutar bir puan ya da bir kuruş birikim üretmiyor; `amountMinor: 0` dahil), `visit_already_counted` (VIP: bu ziyaret penceresinde ziyaret zaten sayıldı), `card_full` (damga: kart dolu ve program ödülden sonra damga biriktirmiyor; önce ödülü kullanın), `type_does_not_earn`. Damga ve VIP, `amountMinor: 0` olsa da ziyareti sayar.
+     * - **Idempotency-Key zorunludur**: 8–64 karakter ve bu kimlik için **kalıcı olarak tekil**; defter anahtarları hiç silinmez. Fiş numarası tek başına anahtar olamaz: ÖKC fiş numaraları Z raporundan sonra yeniden başlar. Kasa + Z no + fiş no birleşimi (ör. `kasa3-z0187-fis0042`) ya da satışla birlikte saklanıp tekrarda yeniden gönderilen bir UUID kullanın. Aynı anahtarla tekrar ikinci kez yazmaz: `duplicate: true`, `credited` ilk isteğin yazdığı, `balance` kartın şimdiki bakiyesi. Anahtar `POST /v1/passes/{serial}/actions` ile aynı alandadır: orada bu kartta başka bir işlem için kullanılmış bir anahtar `422 IDEMPOTENCY_KEY_REUSED` alır.
+     * - **`reference`** (isteğe bağlı, en fazla 80 karakter): fiş numarası buraya yazılır. Defter kaydının notuna yazılır: müşterinin geçmişinde (VIP ziyaretleri hariç; onlar ziyaret olarak görünür) ve işlem dökümünün `Not` sütununda görünür. Müşterinin kişisel bilgisini yazmayın.
+     * - Şube kuralları ve kasa kampanyaları `actions` ile aynıdır: kart bu şubede geçerli değilse `409 WRONG_LOCATION`, kampanya `promotion` ile döner. Salt-okunur hesapta da çalışır.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `scan.use` — Tarayıcıyı kullanma.
+     *
+     * Salt-okunur hesapta da çalışır.
+     *
+     * `POST /v1/passes/{serial}/sale`
+     *
+     * Arguments:
+     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
+     * - `body.amountMinor`: Ödenen toplam, işletmenin para biriminde, kuruş
+     * - `body.reference`: Fiş ya da sipariş numarası; defter kaydının notuna yazılır
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-recordSale API referansı
+     *
+     * @param array{
+     *     params: array{serial: string},
+     *     body: array{locationId: string, amountMinor: int, reference?: string},
+     *     idempotencyKey?: string|null,
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *     applied: 'stamps'|'points'|'visit'|'cashback'|'none',
+     *     credited: int,
+     *     reason?: 'below_minimum'|'visit_already_counted'|'card_full'|'type_does_not_earn',
+     *     balance: int|float|null,
+     *     duplicate: bool,
+     *     detail?: string,
+     *     promotion?: array{id: string, name: string, factor: int},
+     *     rewardReady: bool,
+     *     rewardsReady: int,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function recordSale(array $args): array
+    {
+        /**
+         * @var array{
+         *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *     applied: 'stamps'|'points'|'visit'|'cashback'|'none',
+         *     credited: int,
+         *     reason?: 'below_minimum'|'visit_already_counted'|'card_full'|'type_does_not_earn',
+         *     balance: int|float|null,
+         *     duplicate: bool,
+         *     detail?: string,
+         *     promotion?: array{id: string, name: string, factor: int},
+         *     rewardReady: bool,
+         *     rewardsReady: int,
+         * } $data
+         */
+        $data = $this->call('recordSale', $args);
         return $data;
     }
 
@@ -556,6 +645,38 @@ trait Methods
     // ------------------------------------------------------------ Belge
 
     /**
+     * Sürüm
+     *
+     * Bu kurulumda çalışan Rewloy sürümü (`version`, anlamsal sürüm: `1.0.0`, bir aday için `1.0.0-rc.1`) ve API sürümü (`apiVersion`, şimdilik hep `v1`). Kimlik istemez; kimlikle de çağrılabilir. API'nin yolu (`/v1`) ürünün sürümünden bağımsızdır: ürün 1.x, 2.x olurken `/v1` ancak geriye uymayan bir API değişikliğiyle `/v2` olur. Aynı sürüm her yanıtın `Rewloy-Version` başlığındadır.
+     *
+     * **Kimlik:** kimlik gerekmez, API anahtarı, ekip oturumu, kart sahibi oturumu.
+     *
+     * `GET /v1/meta`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-getMeta API referansı
+     *
+     * @param array{
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{version: string, apiVersion: 'v1'}
+     *
+     * @throws RewloyException
+     */
+    public function getMeta(array $args = []): array
+    {
+        /**
+         * @var array{version: string, apiVersion: 'v1'} $data
+         */
+        $data = $this->call('getMeta', $args);
+        return $data;
+    }
+
+    /**
      * OpenAPI 3.1 belgesi
      *
      * Bu API'nin makine tarafından okunabilir tanımı (Swagger / OpenAPI 3.1). Swagger Editor, Postman ya da Insomnia'ya içe aktarılabilir; istemci kodu üretmek için kullanılabilir. Tanımlar koddaki uç nokta bildirimlerinden üretilir, elle yazılmaz.
@@ -703,7 +824,7 @@ trait Methods
     /**
      * Kim olarak bağlıyım?
      *
-     * Ekip oturumu: kişi, iki adımlı doğrulama durumu ve koltuk taşıdığı işletmeler (her biri için yetkiler). API anahtarı: anahtarın kendisi, işletmesi, rolü, kapsamı, etkin yetkileri (`permissions`) ve bir mağaza eklentisinin anahtarıysa bağlantısı (`key.shopId`). Bir entegrasyonun ilk çağrısı olarak bağlantıyı doğrulamak için idealdir. `mode`: çağıranın test ortamında mı (`test`) gerçek işletmede mi (`live`) çalıştığı; ekip oturumu bir işletme seçmediyse `null`.
+     * Ekip oturumu: kişi, iki adımlı doğrulama durumu ve koltuk taşıdığı işletmeler (her biri için yetkiler). API anahtarı: anahtarın kendisi, işletmesi, rolü, kapsamı, etkin yetkileri (`permissions`), bir mağaza eklentisinin anahtarıysa bağlantısı (`key.shopId`) ve bir eklentinin açıp kapatabileceği yetenekler (`key.abilities`: `view` kartları, durumlarını, programın sayılarını ve son işlemleri görmek; `till` tek bir şubenin kasası, `key.tillLocationId`). Bir entegrasyonun ilk çağrısı olarak bağlantıyı doğrulamak için idealdir. `mode`: çağıranın test ortamında mı (`test`) gerçek işletmede mi (`live`) çalıştığı; ekip oturumu bir işletme seçmediyse `null`.
      *
      * **Kimlik:** ekip oturumu, API anahtarı.
      *
@@ -751,6 +872,9 @@ trait Methods
      *         expiresAt: string|null,
      *         rateLimitPerMinute: int,
      *         shopId: string|null,
+     *         abilities: list<'view'|'till'>,
+     *         tillLocationId: string|null,
+     *         tillLocationName: string|null,
      *     },
      *     business: array{id: string, name: string},
      *     permissions: list<string>,
@@ -794,6 +918,9 @@ trait Methods
          *         expiresAt: string|null,
          *         rateLimitPerMinute: int,
          *         shopId: string|null,
+         *         abilities: list<'view'|'till'>,
+         *         tillLocationId: string|null,
+         *         tillLocationName: string|null,
          *     },
          *     business: array{id: string, name: string},
          *     permissions: list<string>,
@@ -816,6 +943,7 @@ trait Methods
      * - `phone`: telefonla giriş açık değilse `501 NOT_ENABLED`; Türkiye cep telefonu değilse `400 INVALID_PHONE`. `channel` (`whatsapp` ya da `sms`) verilmezse şu an açık olan ilk yol kullanılır (önce WhatsApp); istenen yol açık değilse `501 NOT_ENABLED`, bugünkü bütçesi dolduysa `503 PHONE_BUSY` — ikisinde de `details.channels` şu an açık olanlar (boşsa e-postayla girin). Yanıttaki `channel` kodun gittiği yoldur: WhatsApp kodu kendiliğinden dolmaz, kişiye "Kodu kopyala" ile yapıştırmasını söyleyin.
      * - `previousToken`: bu kurulumun daha önceki `rwh_` oturumu (süresi dolmuş olsa da). Adres ya da numara o hesabınsa adres ve numara başına sınırlar uygulanmaz, böylece başkaları sizin kodlarınızı tüketemez. Çıkış yapılmış ya da kaldırılmış bir oturum bir şey kanıtlamaz.
      * - `deviceName`: açılacak oturumun Cihazlarım'daki adı.
+     * - **Idempotency-Key** (isteğe bağlı, önerilir; 8–64 karakter, her yeni istek için yeni bir UUID): aynı anahtar ve aynı gövdeyle tekrar yeni kod GÖNDERMEZ, ilk yanıtı (aynı `request`) `Idempotent-Replayed: true` ile döndürür ve sınırlardan düşmez — bağlantısı kopan uygulama güvenle yineler. Aynı anahtar başka bir gövdeyle `422 IDEMPOTENCY_KEY_REUSED`; ilk istek sürerken `409 IDEMPOTENCY_IN_PROGRESS` (bir şey gönderilmez). Yanıt şifreli saklanır, 7 gün tekrar edilir; kodun kendisi 15 dakika geçerlidir, yeni kod için yeni anahtar gönderin. Oturumsuz çağrıda anahtar istemcinin IP adresine bağlıdır. Başlık yoksa her çağrı yeni bir kod ve yeni bir `request` demektir.
      * - **Sözleşme değişikliği (ADR 150):** `request` yeni. E-postadaki bağlantı artık oturumu tek başına açmaz; bağlantıyı uygulamanız yakalarsa `linkToken` olarak yine aynı `request` ile gönderin.
      *
      * **Kimlik:** kimlik gerekmez.
@@ -827,6 +955,7 @@ trait Methods
      * - `body.channel`: Kodun gideceği yol: `whatsapp` ya da `sms` (yalnız `phone` ile). Verilmezse şu an açık olan ilk yol (önce WhatsApp). Açık değilse `501 NOT_ENABLED`, bugünkü bütçesi dolduysa `503 PHONE_BUSY`; ikisinde de `details.channels` şu an açık olanları söyler.
      * - `body.deviceName`: Bu cihazın Cihazlarım listesindeki adı (örn. "Ada'nın telefonu"); yoksa "Rewloy uygulaması".
      * - `body.previousToken`: Bu kurulumun daha önceki `rwh_…` oturumu, süresi dolmuş olsa da (çıkış yapılmış ya da kaldırılmış olmasın). Adres hesabınızınsa adres başına saatlik kod sınırı size uygulanmaz: başkaları kodlarınızı tüketemez.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-holderLogin API referansı
      *
@@ -838,6 +967,7 @@ trait Methods
      *         deviceName?: string,
      *         previousToken?: string,
      *     },
+     *     idempotencyKey?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
      * } $args
@@ -1323,7 +1453,7 @@ trait Methods
     /**
      * Davet
      *
-     * Davet e-postasındaki bağlantının son parçası (`/davet/<code>`): hangi işletme, hangi adres, o adresin hesabı var mı (varsa mevcut şifreyle kabul edilir).
+     * Davet e-postasındaki bağlantının son parçası (`/davet/<code>`): hangi işletme, hangi adres. Adresin Rewloy hesabı olup olmadığını söylemez (bağlantı daveti yapanda da vardır, ADR 181): hesabı olan kişi o hesapla giriş yapıp oturumuyla kabul eder, olmayan şifre belirleyerek.
      *
      * **Kimlik:** kimlik gerekmez.
      *
@@ -1336,14 +1466,14 @@ trait Methods
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
      * } $args
-     * @return array{merchantName: string, email: string, userExists: bool}
+     * @return array{merchantName: string, email: string}
      *
      * @throws RewloyException
      */
     public function invitePreview(array $args): array
     {
         /**
-         * @var array{merchantName: string, email: string, userExists: bool} $data
+         * @var array{merchantName: string, email: string} $data
          */
         $data = $this->call('invitePreview', $args);
         return $data;
@@ -1352,17 +1482,27 @@ trait Methods
     /**
      * Daveti kabul et
      *
-     * Hesap yoksa bu şifreyle açılır (en az 10 karakter); varsa mevcut şifre istenir. Koltuk ve roller verilir — daveti yapanın o anki yetkileriyle yeniden denetlenerek — ve oturum döner. Daveti yapan işletme sahiplerine bildirilir.
+     * Koltuk ve roller verilir — daveti yapanın o anki yetkileriyle yeniden denetlenerek — ve oturum döner. Daveti yapan işletme sahiplerine bildirilir. **Davet hiçbir zaman mevcut bir hesabın şifresini sormaz** (bağlantı daveti yapanda da vardır; ADR 181):
+     * - **Adresin hesabı varsa:** kişi o hesapla girer (`POST /v1/auth/login`) ve bu çağrıyı kendi `rws_` oturumuyla, gövdesiz yapar; yanıt aynı oturumu güncel işletmeleriyle döndürür. Başka bir adresin oturumu `403 INVITE_OTHER_ACCOUNT`. Oturumsuz çağrı, şifreyle de olsa, `409 INVITE_SIGN_IN`.
+     * - **Hesabı yoksa:** oturumsuz, `password` (en az 10 karakter) ile hesap açılır ve yeni oturum döner. Adres davetle doğrulanmış sayılmaz: doğrulama bağlantısı e-postayla gider (kayıttaki gibi).
+     * - IP başına 15 dakikada 20 deneme.
      *
-     * **Kimlik:** kimlik gerekmez.
+     * **Kimlik:** kimlik gerekmez, ekip oturumu.
+     *
+     * Salt-okunur hesapta da çalışır.
      *
      * `POST /v1/auth/invites/{code}/accept`
+     *
+     * Arguments:
+     * - `body.password`: Yalnız yeni hesap için: hesabın şifresi (en az 10 karakter)
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-acceptInvite API referansı
      *
      * @param array{
      *     params: array{code: string},
-     *     body: array{password: string},
+     *     body?: array{password?: string},
+     *     merchant?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
      * } $args
@@ -2016,6 +2156,12 @@ trait Methods
      *     joinUrl: string|null,
      *     artwork: array{logo: bool, icon: bool, banner: bool},
      *     stats: array{holders: int, activeCards: int, visits30: int, rewardsReady: int},
+     *     sale: array{
+     *         writes: 'stamps'|'points'|'visit'|'cashback'|'none',
+     *         perSale: int|null,
+     *         pointsPerUnit: int|null,
+     *         percent: int|null,
+     *     },
      * }>
      *
      * @throws RewloyException
@@ -2032,6 +2178,12 @@ trait Methods
          *     joinUrl: string|null,
          *     artwork: array{logo: bool, icon: bool, banner: bool},
          *     stats: array{holders: int, activeCards: int, visits30: int, rewardsReady: int},
+         *     sale: array{
+         *         writes: 'stamps'|'points'|'visit'|'cashback'|'none',
+         *         perSale: int|null,
+         *         pointsPerUnit: int|null,
+         *         percent: int|null,
+         *     },
          * }> $data
          */
         $data = $this->call('listPrograms', $args);
@@ -2069,6 +2221,7 @@ trait Methods
      * - `body.tiers`: VIP seviyeleri; ilk seviye her zaman 0 ziyaretle başlar
      * - `body.cashbackRate`: Cashback yüzdesi
      * - `body.offerText`: Kupon: teklif metni
+     * - `body.onlineValue`: Kupon: online mağazada kullanıldığında değeri (ADR 179). Yoksa (ya da null) kupon yalnız mağazada geçer; kodun kendi online değeri ya da tutarı bunun önüne geçer.
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-createProgram API referansı
@@ -2128,6 +2281,7 @@ trait Methods
      *         tiers?: list<array{name: string, visitsRequired: int}>,
      *         cashbackRate?: int,
      *         offerText?: string,
+     *         onlineValue?: array{kind: 'amount'|'percent', value: int}|null,
      *     },
      *     merchant?: string|null,
      *     timeout?: int|float|null,
@@ -2142,6 +2296,12 @@ trait Methods
      *     joinUrl: string|null,
      *     artwork: array{logo: bool, icon: bool, banner: bool},
      *     stats: array{holders: int, activeCards: int, visits30: int, rewardsReady: int},
+     *     sale: array{
+     *         writes: 'stamps'|'points'|'visit'|'cashback'|'none',
+     *         perSale: int|null,
+     *         pointsPerUnit: int|null,
+     *         percent: int|null,
+     *     },
      * }
      *
      * @throws RewloyException
@@ -2158,6 +2318,12 @@ trait Methods
          *     joinUrl: string|null,
          *     artwork: array{logo: bool, icon: bool, banner: bool},
          *     stats: array{holders: int, activeCards: int, visits30: int, rewardsReady: int},
+         *     sale: array{
+         *         writes: 'stamps'|'points'|'visit'|'cashback'|'none',
+         *         perSale: int|null,
+         *         pointsPerUnit: int|null,
+         *         percent: int|null,
+         *     },
          * } $data
          */
         $data = $this->call('createProgram', $args);
@@ -2277,6 +2443,12 @@ trait Methods
      *     joinUrl: string|null,
      *     artwork: array{logo: bool, icon: bool, banner: bool},
      *     stats: array{holders: int, activeCards: int, visits30: int, rewardsReady: int},
+     *     sale: array{
+     *         writes: 'stamps'|'points'|'visit'|'cashback'|'none',
+     *         perSale: int|null,
+     *         pointsPerUnit: int|null,
+     *         percent: int|null,
+     *     },
      * }
      *
      * @throws RewloyException
@@ -2293,6 +2465,12 @@ trait Methods
          *     joinUrl: string|null,
          *     artwork: array{logo: bool, icon: bool, banner: bool},
          *     stats: array{holders: int, activeCards: int, visits30: int, rewardsReady: int},
+         *     sale: array{
+         *         writes: 'stamps'|'points'|'visit'|'cashback'|'none',
+         *         perSale: int|null,
+         *         pointsPerUnit: int|null,
+         *         percent: int|null,
+         *     },
          * } $data
          */
         $data = $this->call('getProgram', $args);
@@ -2329,6 +2507,7 @@ trait Methods
      * - `body.tiers`: VIP seviyeleri; ilk seviye her zaman 0 ziyaretle başlar
      * - `body.cashbackRate`: Cashback yüzdesi
      * - `body.offerText`: Kupon: teklif metni
+     * - `body.onlineValue`: Kupon: online mağazada kullanıldığında değeri (ADR 179). Yoksa (ya da null) kupon yalnız mağazada geçer; kodun kendi online değeri ya da tutarı bunun önüne geçer.
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-updateProgram API referansı
@@ -2387,6 +2566,7 @@ trait Methods
      *         tiers?: list<array{name: string, visitsRequired: int}>,
      *         cashbackRate?: int,
      *         offerText?: string,
+     *         onlineValue?: array{kind: 'amount'|'percent', value: int}|null,
      *     },
      *     merchant?: string|null,
      *     timeout?: int|float|null,
@@ -2401,6 +2581,12 @@ trait Methods
      *     joinUrl: string|null,
      *     artwork: array{logo: bool, icon: bool, banner: bool},
      *     stats: array{holders: int, activeCards: int, visits30: int, rewardsReady: int},
+     *     sale: array{
+     *         writes: 'stamps'|'points'|'visit'|'cashback'|'none',
+     *         perSale: int|null,
+     *         pointsPerUnit: int|null,
+     *         percent: int|null,
+     *     },
      * }
      *
      * @throws RewloyException
@@ -2417,6 +2603,12 @@ trait Methods
          *     joinUrl: string|null,
          *     artwork: array{logo: bool, icon: bool, banner: bool},
          *     stats: array{holders: int, activeCards: int, visits30: int, rewardsReady: int},
+         *     sale: array{
+         *         writes: 'stamps'|'points'|'visit'|'cashback'|'none',
+         *         perSale: int|null,
+         *         pointsPerUnit: int|null,
+         *         percent: int|null,
+         *     },
          * } $data
          */
         $data = $this->call('updateProgram', $args);
@@ -2527,6 +2719,7 @@ trait Methods
      *             tiers?: list<array{name: string, visitsRequired: int}>,
      *             cashbackRate?: int,
      *             offerText?: string,
+     *             onlineValue?: array{kind: 'amount'|'percent', value: int}|null,
      *         },
      *         programId?: string,
      *         stage?: 'new'|'mid'|'ready',
@@ -3784,7 +3977,7 @@ trait Methods
      * | tür | alanlar |
      * |---|---|
      * | hediye kartı | `valueMinor` zorunlu (100 – 100.000.000 kuruş); kullanım her zaman sınırsız, bakiye bitene kadar |
-     * | kupon | ya `offerText` (ör. "1 tatlı") ya `valueMinor` (100 – 10.000.000 kuruş indirim); `usage` |
+     * | kupon | ya `offerText` (ör. "1 tatlı") ya `valueMinor` (100 – 10.000.000 kuruş indirim); `usage`; isteğe bağlı `onlineValue` (online mağazadaki değeri: `{ kind: amount, value: kuruş }` ya da `{ kind: percent, value: 1–100 }`, ADR 179) |
      * | indirim kartı | `percent` (yoksa programın oranı); `usage` |
      *
      * `usage`: `once` tek kullanım, `limited` + `usageLimit` (2–1000), `unlimited`. `validUntil` bir gün (YYYY-AA-GG) ise o günün sonuna kadar (Türkiye saati) geçerlidir. Başka türün alanı reddedilir. Planda `instruments` özelliği gerekir.
@@ -3815,6 +4008,7 @@ trait Methods
      *         validUntil?: string,
      *         offerText?: string,
      *         percent?: int,
+     *         onlineValue?: array{kind: 'amount'|'percent', value: int},
      *         locationIds?: list<string>,
      *     },
      *     merchant?: string|null,
@@ -3853,6 +4047,7 @@ trait Methods
      *     branchNames: list<string>,
      *     spentMinor: int|float,
      *     outstandingMinor: int|float,
+     *     onlineValue: array{kind: 'amount'|'percent', value: int}|null,
      * }
      *
      * @throws RewloyException
@@ -3892,6 +4087,7 @@ trait Methods
          *     branchNames: list<string>,
          *     spentMinor: int|float,
          *     outstandingMinor: int|float,
+         *     onlineValue: array{kind: 'amount'|'percent', value: int}|null,
          * } $data
          */
         $data = $this->call('createBatch', $args);
@@ -3952,6 +4148,7 @@ trait Methods
      *     branchNames: list<string>,
      *     spentMinor: int|float,
      *     outstandingMinor: int|float,
+     *     onlineValue: array{kind: 'amount'|'percent', value: int}|null,
      * }
      *
      * @throws RewloyException
@@ -3991,6 +4188,7 @@ trait Methods
          *     branchNames: list<string>,
          *     spentMinor: int|float,
          *     outstandingMinor: int|float,
+         *     onlineValue: array{kind: 'amount'|'percent', value: int}|null,
          * } $data
          */
         $data = $this->call('getBatch', $args);
@@ -4012,7 +4210,7 @@ trait Methods
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * Fields of the answer marked for removal:
-     * - `data[].email`: **Kullanımdan kalkıyor:** 5 Nisan 2027 tarihine kadar gelir; yerine `identifiers`. Kartı alanın adresi. Yerine geçen `identifiers` yalnız `customers.read` yetkisiyle gelir.
+     * - `data[].email`: **Kullanımdan kalkıyor:** 5 Nisan 2027 tarihine kadar gelir; yerine `identifiers`. Kartı alanın adresi; `identifiers` gibi yalnız `customers.read` yetkisiyle ve kimliğin şube kapsamındaki kişiler için gelir, yoksa null (ADR 181). Yerine geçen `identifiers`.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-listBatchCards API referansı
      *
@@ -4166,6 +4364,7 @@ trait Methods
      *     branchNames: list<string>,
      *     spentMinor: int|float,
      *     outstandingMinor: int|float,
+     *     onlineValue: array{kind: 'amount'|'percent', value: int}|null,
      * }
      *
      * @throws RewloyException
@@ -4205,6 +4404,7 @@ trait Methods
          *     branchNames: list<string>,
          *     spentMinor: int|float,
          *     outstandingMinor: int|float,
+         *     onlineValue: array{kind: 'amount'|'percent', value: int}|null,
          * } $data
          */
         $data = $this->call('closeBatch', $args);
@@ -6963,7 +7163,7 @@ trait Methods
     /**
      * Ana sayfa
      *
-     * Dört ana sayı (yeni kart, yeni müşteri, ziyaret, ödül) ve bir önceki eşit dönem, arkalarındaki günlük seri (önce önceki dönem, sonra bu dönem), tezgâhtaki son 15 olay ve — kapsam bütün şubelerse ve 2+ şube varsa — şubeler yan yana. Kişi adları yalnız `customers.read` olan kimliğe gelir.
+     * Dört ana sayı (yeni kart, yeni müşteri, ziyaret, ödül) ve bir önceki eşit dönem, arkalarındaki günlük seri (önce önceki dönem, sonra bu dönem), tezgâhtaki son 15 olay ve — kapsam bütün şubelerse ve 2+ şube varsa — şubeler yan yana. Kişi adları yalnız `customers.read` olan kimliğe gelir. Kapsamı programlarla sınırlı bir kimlik bütün işletmenin özetini okuyamaz (`403 OUT_OF_SCOPE`); `GET /v1/analytics` ve `GET /v1/activity`yi programıyla kullanır.
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
@@ -7053,7 +7253,7 @@ trait Methods
     /**
      * Analitik
      *
-     * Son 7, 30 ya da 90 günün göstergeleri: açık kartlar, yeni kartlar, ziyaretler, ziyaret eden kişiler ve bunlardan dönen (2+ ziyaret), ödüller; günlük ziyaretler; haftalık yeni ve dönen ziyaretçiler; program başına kart → kullanım → ödül hunisi; şubeler; en sık gelen müşteriler (yalnız `customers.read` ile). Apple Cüzdan'daki kartlar ve konum hatırlatması taşıyanlar.
+     * Son 7, 30 ya da 90 günün göstergeleri: açık kartlar, yeni kartlar, ziyaretler, ziyaret eden kişiler ve bunlardan dönen (2+ ziyaret), ödüller; günlük ziyaretler; haftalık yeni ve dönen ziyaretçiler; program başına kart → kullanım → ödül hunisi; şubeler; en sık gelen müşteriler (yalnız `customers.read` ile). Apple Cüzdan'daki kartlar ve konum hatırlatması taşıyanlar. `programId` ile tek bir programın sayıları (ADR 178); kapsamı programlarla sınırlı bir kimlik yalnız kendi programlarını görür. Bir mağaza eklentisinin anahtarına müşteri adı gelmez.
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
@@ -7063,12 +7263,17 @@ trait Methods
      *
      * Arguments:
      * - `query.locationId`: Tek bir şube (kapsamınız içinde)
+     * - `query.programId`: Tek bir program (kapsamınız içinde). Kapsamı programlarla sınırlı bir kimlik (ör. mağaza eklentisinin anahtarı) yalnız kendi programlarını görür; programsız istekte de yalnız onlar sayılır.
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-getAnalytics API referansı
      *
      * @param array{
-     *     query?: array{days?: 7|30|90|null, locationId?: string|null},
+     *     query?: array{
+     *         days?: 7|30|90|null,
+     *         locationId?: string|null,
+     *         programId?: string|null,
+     *     },
      *     merchant?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
@@ -7147,7 +7352,7 @@ trait Methods
     /**
      * İşlem kaydı: kasa
      *
-     * Kartlarda yapılan her işlem, yeniden eskiye: damga, puan, ödül, harcama, yükleme, ziyaret, kupon kullanımı… kim (ekip üyesi, API anahtarı ya da sistem), nerede, hangi kart. `day` işletmenin takvim günüdür. Planda `auditlog` özelliği gerekir. `limit` en fazla 100.
+     * Kartlarda yapılan her işlem, yeniden eskiye: damga, puan, ödül, harcama, yükleme, ziyaret, kupon kullanımı… kim (ekip üyesi, API anahtarı ya da sistem), nerede, hangi kart. `day` işletmenin takvim günüdür. Planda `auditlog` özelliği gerekir. `limit` en fazla 100. Kapsamı programlarla sınırlı bir kimlik (ör. mağaza eklentisinin anahtarı) yalnız kendi programlarının kartlarını görür (ADR 178). Bir mağaza eklentisinin anahtarına kişisel veri gelmez: ekip üyesi `actor` yerine "ekip üyesi" yazar, `personId` null'dır.
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
@@ -7159,6 +7364,7 @@ trait Methods
      * - `query.locationId`: Tek bir şube (kapsamınız içinde)
      * - `query.seatId`: Yalnız bu ekip üyesinin yaptıkları
      * - `query.day`: YYYY-AA-GG
+     * - `query.programId`: Tek bir program (kapsamınız içinde). Kapsamı programlarla sınırlı bir kimlik (ör. mağaza eklentisinin anahtarı) yalnız kendi programlarını görür; programsız istekte de yalnız onlar sayılır.
      * - `query.serial`: Kart numarası ya da başı
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
@@ -7169,7 +7375,7 @@ trait Methods
      *         locationId?: string|null,
      *         seatId?: string|null,
      *         day?: string|null,
-     *         kind?: 'earn'|'redeem'|'spend'|'load'|'accrue'|'visit'|'use'|'issue'|'adjust'|'expire'|null,
+     *         kind?: 'earn'|'redeem'|'spend'|'load'|'accrue'|'visit'|'use'|'issue'|'adjust'|'expire'|'hold'|'release'|'refund'|null,
      *         programId?: string|null,
      *         serial?: string|null,
      *         page?: int|null,
@@ -7293,7 +7499,7 @@ trait Methods
     /**
      * Canlı akış (SSE)
      *
-     * Tezgâhta olan her şey, olduğu anda: `event: event` satırlarında `{ at, kind, location, program, delta, unit, name, currency }` (JSON). Kapsamınızdaki şubeler; kişi adı yalnız `customers.read` ile. 25 saniyede bir `: hb` satırı bağlantıyı canlı tutar; koparsa yeniden bağlanın. Tarayıcıdaki `EventSource` başlık gönderemediği için `fetch` ile akış okuyun. IP başına en fazla 12 açık bağlantı. Sunucudan sunucuya bildirim için webhook'ları kullanın.
+     * Tezgâhta olan her şey, olduğu anda: `event: event` satırlarında `{ at, kind, location, program, delta, unit, name, currency }` (JSON). Kapsamınızdaki şubeler; kişi adı yalnız `customers.read` ile. 25 saniyede bir `: hb` satırı bağlantıyı canlı tutar; koparsa yeniden bağlanın. Tarayıcıdaki `EventSource` başlık gönderemediği için `fetch` ile akış okuyun. IP başına en fazla 12 açık bağlantı. Sunucudan sunucuya bildirim için webhook'ları kullanın. Kapsamı programlarla sınırlı bir kimlik akışı açamaz (`403 OUT_OF_SCOPE`); `GET /v1/activity`yi programıyla sorar.
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
@@ -8435,10 +8641,37 @@ trait Methods
      *     },
      *     lastDelivery: array{
      *         at: string,
-     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
      *     }|null,
      *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
-     *     pluginKey: array{id: string, prefix: string, name: string}|null,
+     *     pluginKey: array{
+     *         id: string,
+     *         prefix: string,
+     *         name: string,
+     *         abilities: list<'view'|'till'>,
+     *         tillLocationId: string|null,
+     *         tillLocationName: string|null,
+     *         tillArchived: bool,
+     *     }|null,
+     *     shopName: string|null,
+     *     settings: array{
+     *         tax: array{
+     *             giftcard: 'payment'|'discount',
+     *             cashback: 'payment'|'discount',
+     *             voucher: 'payment'|'discount',
+     *         },
+     *         refundReverses: 'code_orders'|'all'|'never',
+     *         holdDays: int,
+     *     },
+     *     accepts: array{
+     *         programIds: list<string>,
+     *         ceiling: list<array{
+     *             id: string,
+     *             name: string,
+     *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *         }>|null,
+     *     },
+     *     unbacked: array{count: int, lastAt: string|null},
      * }>
      *
      * @throws RewloyException
@@ -8469,10 +8702,37 @@ trait Methods
          *     },
          *     lastDelivery: array{
          *         at: string,
-         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
          *     }|null,
          *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
-         *     pluginKey: array{id: string, prefix: string, name: string}|null,
+         *     pluginKey: array{
+         *         id: string,
+         *         prefix: string,
+         *         name: string,
+         *         abilities: list<'view'|'till'>,
+         *         tillLocationId: string|null,
+         *         tillLocationName: string|null,
+         *         tillArchived: bool,
+         *     }|null,
+         *     shopName: string|null,
+         *     settings: array{
+         *         tax: array{
+         *             giftcard: 'payment'|'discount',
+         *             cashback: 'payment'|'discount',
+         *             voucher: 'payment'|'discount',
+         *         },
+         *         refundReverses: 'code_orders'|'all'|'never',
+         *         holdDays: int,
+         *     },
+         *     accepts: array{
+         *         programIds: list<string>,
+         *         ceiling: list<array{
+         *             id: string,
+         *             name: string,
+         *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *         }>|null,
+         *     },
+         *     unbacked: array{count: int, lastAt: string|null},
          * }> $data
          */
         $data = $this->call('listShops', $args);
@@ -8535,10 +8795,37 @@ trait Methods
      *     },
      *     lastDelivery: array{
      *         at: string,
-     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
      *     }|null,
      *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
-     *     pluginKey: array{id: string, prefix: string, name: string}|null,
+     *     pluginKey: array{
+     *         id: string,
+     *         prefix: string,
+     *         name: string,
+     *         abilities: list<'view'|'till'>,
+     *         tillLocationId: string|null,
+     *         tillLocationName: string|null,
+     *         tillArchived: bool,
+     *     }|null,
+     *     shopName: string|null,
+     *     settings: array{
+     *         tax: array{
+     *             giftcard: 'payment'|'discount',
+     *             cashback: 'payment'|'discount',
+     *             voucher: 'payment'|'discount',
+     *         },
+     *         refundReverses: 'code_orders'|'all'|'never',
+     *         holdDays: int,
+     *     },
+     *     accepts: array{
+     *         programIds: list<string>,
+     *         ceiling: list<array{
+     *             id: string,
+     *             name: string,
+     *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *         }>|null,
+     *     },
+     *     unbacked: array{count: int, lastAt: string|null},
      *     secret: string|null,
      * }
      *
@@ -8570,10 +8857,37 @@ trait Methods
          *     },
          *     lastDelivery: array{
          *         at: string,
-         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
          *     }|null,
          *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
-         *     pluginKey: array{id: string, prefix: string, name: string}|null,
+         *     pluginKey: array{
+         *         id: string,
+         *         prefix: string,
+         *         name: string,
+         *         abilities: list<'view'|'till'>,
+         *         tillLocationId: string|null,
+         *         tillLocationName: string|null,
+         *         tillArchived: bool,
+         *     }|null,
+         *     shopName: string|null,
+         *     settings: array{
+         *         tax: array{
+         *             giftcard: 'payment'|'discount',
+         *             cashback: 'payment'|'discount',
+         *             voucher: 'payment'|'discount',
+         *         },
+         *         refundReverses: 'code_orders'|'all'|'never',
+         *         holdDays: int,
+         *     },
+         *     accepts: array{
+         *         programIds: list<string>,
+         *         ceiling: list<array{
+         *             id: string,
+         *             name: string,
+         *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *         }>|null,
+         *     },
+         *     unbacked: array{count: int, lastAt: string|null},
          *     secret: string|null,
          * } $data
          */
@@ -8626,10 +8940,37 @@ trait Methods
      *     },
      *     lastDelivery: array{
      *         at: string,
-     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
      *     }|null,
      *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
-     *     pluginKey: array{id: string, prefix: string, name: string}|null,
+     *     pluginKey: array{
+     *         id: string,
+     *         prefix: string,
+     *         name: string,
+     *         abilities: list<'view'|'till'>,
+     *         tillLocationId: string|null,
+     *         tillLocationName: string|null,
+     *         tillArchived: bool,
+     *     }|null,
+     *     shopName: string|null,
+     *     settings: array{
+     *         tax: array{
+     *             giftcard: 'payment'|'discount',
+     *             cashback: 'payment'|'discount',
+     *             voucher: 'payment'|'discount',
+     *         },
+     *         refundReverses: 'code_orders'|'all'|'never',
+     *         holdDays: int,
+     *     },
+     *     accepts: array{
+     *         programIds: list<string>,
+     *         ceiling: list<array{
+     *             id: string,
+     *             name: string,
+     *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *         }>|null,
+     *     },
+     *     unbacked: array{count: int, lastAt: string|null},
      * }
      *
      * @throws RewloyException
@@ -8660,10 +9001,37 @@ trait Methods
          *     },
          *     lastDelivery: array{
          *         at: string,
-         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
          *     }|null,
          *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
-         *     pluginKey: array{id: string, prefix: string, name: string}|null,
+         *     pluginKey: array{
+         *         id: string,
+         *         prefix: string,
+         *         name: string,
+         *         abilities: list<'view'|'till'>,
+         *         tillLocationId: string|null,
+         *         tillLocationName: string|null,
+         *         tillArchived: bool,
+         *     }|null,
+         *     shopName: string|null,
+         *     settings: array{
+         *         tax: array{
+         *             giftcard: 'payment'|'discount',
+         *             cashback: 'payment'|'discount',
+         *             voucher: 'payment'|'discount',
+         *         },
+         *         refundReverses: 'code_orders'|'all'|'never',
+         *         holdDays: int,
+         *     },
+         *     accepts: array{
+         *         programIds: list<string>,
+         *         ceiling: list<array{
+         *             id: string,
+         *             name: string,
+         *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *         }>|null,
+         *     },
+         *     unbacked: array{count: int, lastAt: string|null},
          * } $data
          */
         $data = $this->call('getShop', $args);
@@ -8716,10 +9084,37 @@ trait Methods
      *     },
      *     lastDelivery: array{
      *         at: string,
-     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
      *     }|null,
      *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
-     *     pluginKey: array{id: string, prefix: string, name: string}|null,
+     *     pluginKey: array{
+     *         id: string,
+     *         prefix: string,
+     *         name: string,
+     *         abilities: list<'view'|'till'>,
+     *         tillLocationId: string|null,
+     *         tillLocationName: string|null,
+     *         tillArchived: bool,
+     *     }|null,
+     *     shopName: string|null,
+     *     settings: array{
+     *         tax: array{
+     *             giftcard: 'payment'|'discount',
+     *             cashback: 'payment'|'discount',
+     *             voucher: 'payment'|'discount',
+     *         },
+     *         refundReverses: 'code_orders'|'all'|'never',
+     *         holdDays: int,
+     *     },
+     *     accepts: array{
+     *         programIds: list<string>,
+     *         ceiling: list<array{
+     *             id: string,
+     *             name: string,
+     *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *         }>|null,
+     *     },
+     *     unbacked: array{count: int, lastAt: string|null},
      * }
      *
      * @throws RewloyException
@@ -8750,10 +9145,37 @@ trait Methods
          *     },
          *     lastDelivery: array{
          *         at: string,
-         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
          *     }|null,
          *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
-         *     pluginKey: array{id: string, prefix: string, name: string}|null,
+         *     pluginKey: array{
+         *         id: string,
+         *         prefix: string,
+         *         name: string,
+         *         abilities: list<'view'|'till'>,
+         *         tillLocationId: string|null,
+         *         tillLocationName: string|null,
+         *         tillArchived: bool,
+         *     }|null,
+         *     shopName: string|null,
+         *     settings: array{
+         *         tax: array{
+         *             giftcard: 'payment'|'discount',
+         *             cashback: 'payment'|'discount',
+         *             voucher: 'payment'|'discount',
+         *         },
+         *         refundReverses: 'code_orders'|'all'|'never',
+         *         holdDays: int,
+         *     },
+         *     accepts: array{
+         *         programIds: list<string>,
+         *         ceiling: list<array{
+         *             id: string,
+         *             name: string,
+         *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *         }>|null,
+         *     },
+         *     unbacked: array{count: int, lastAt: string|null},
          * } $data
          */
         $data = $this->call('setShopEnabled', $args);
@@ -8875,6 +9297,9 @@ trait Methods
      *     createdAt: string,
      *     expiresAt: string,
      *     createdBy: string|null,
+     *     view: bool,
+     *     tillLocationId: string|null,
+     *     tillLocationName: string|null,
      * }>
      *
      * @throws RewloyException
@@ -8892,6 +9317,9 @@ trait Methods
          *     createdAt: string,
          *     expiresAt: string,
          *     createdBy: string|null,
+         *     view: bool,
+         *     tillLocationId: string|null,
+         *     tillLocationName: string|null,
          * }> $data
          */
         $data = $this->call('listShopConnectTokens', $args);
@@ -8905,6 +9333,10 @@ trait Methods
      * - Kod **yalnız bu yanıtta** görünür; Rewloy yalnız özetini saklar. 15 dakika geçerlidir.
      * - Kodu bir kişi alır (ekip oturumu; bir anahtar anahtar üretemez), `apikeys.manage`, kartın programında mağaza bağlantısı yetkisi ve — elle anahtar oluştururken olduğu gibi — `team.manage` ile (anahtarın yetkisi o kişiden verilen bir roldür; kişi E-ticaret rolünün yetkilerini tüm şubelerde taşımalıdır), `api` ve `ecommerce` özellikli bir planda. Kod bir API anahtarı ürettiği için kişinin şifresi yeniden istenir (`password`), anahtar oluştururken olduğu gibi. Bağlantı ve anahtar, kod kullanıldığı anda bu kişinin yetkileriyle kurulur: kişi o arada yetkisini kaybettiyse hiçbir şey kurulmaz.
      * - Kural alanları `POST /v1/shops` ile aynıdır. En fazla 5 bağlantı ve aynı anda en fazla 5 bekleyen kod.
+     * - **Eklentinin yetkileri** (ADR 178), kodu alan kişi seçer; sonra bağlantının sayfasından ya da `PUT /v1/shops/{id}/plugin-abilities` ile değişir:
+     *   - `view` (Görüntüleme; bu çağrıda gönderilmezse kapalı, panelin formunda işaretli gelir): bağlantının programında `passes.read` ve `analytics.read` — kartın durumu (`GET /v1/passes/{serial}`), programın sayıları (`GET /v1/analytics?programId=`) ve kartlardaki son işlemler (`GET /v1/activity`). Müşterinin adı, e-postası ya da telefonu gelmez; ekip üyesinin e-postası da.
+     *   - `tillLocationId` (Kasa, varsayılan kapalı): bu tek şubede ve bağlantının programında `scan.use` — `GET /v1/passes/{serial}/till`, `POST …/sale`, `POST …/actions`. Hediye kartı yüklemek (`load`) yine `instruments.issue` ister ve verilmez. Kapalı başlar: açıkken WooCommerce'i yönetebilen herkes o şubede müşterilerin bakiyesini harcatabilir.
+     *   - Kişi bu yetkileri verebilmelidir (`team.manage` ve alt küme kuralı: Görüntüleme yetkilerini tüm şubelerde, `scan.use`'u o şubede taşımalı).
      *
      * **Kimlik:** ekip oturumu.
      *
@@ -8913,6 +9345,8 @@ trait Methods
      * `POST /v1/shops/connect-tokens`
      *
      * Arguments:
+     * - `body.view`: Görüntüleme: kartlar, durumları, programın sayıları ve son işlemleri. Gönderilmezse kapalı (ADR 178'in incelemesi): eski istemcinin anahtarı eskisi gibi kalır
+     * - `body.tillLocationId`: Kasa: bu şubenin kasası; gönderilmezse ya da null ise kasa kapalı
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-createShopConnectToken API referansı
@@ -8924,6 +9358,8 @@ trait Methods
      *         perAmountMinor?: int,
      *         step?: int,
      *         password: string,
+     *         view?: bool,
+     *         tillLocationId?: string|null,
      *     },
      *     merchant?: string|null,
      *     timeout?: int|float|null,
@@ -8939,6 +9375,9 @@ trait Methods
      *     createdAt: string,
      *     expiresAt: string,
      *     createdBy: string|null,
+     *     view: bool,
+     *     tillLocationId: string|null,
+     *     tillLocationName: string|null,
      *     token: string,
      * }
      *
@@ -8957,6 +9396,9 @@ trait Methods
          *     createdAt: string,
          *     expiresAt: string,
          *     createdBy: string|null,
+         *     view: bool,
+         *     tillLocationId: string|null,
+         *     tillLocationName: string|null,
          *     token: string,
          * } $data
          */
@@ -8999,7 +9441,7 @@ trait Methods
      *
      * Mağaza eklentisinin tek adımı: paneldeki bağlantı kodunu (`rwc_…`) verir, karşılığında **bir kez** şunları alır: bağlantı (`shop`), bağlantının sırrı (`secret`, WooCommerce webhook'una yazılır) ve yalnız bu bağlantıya bağlı API anahtarı (`apiKey.token`). Kimlik istemez; kod kimliktir.
      * - Kod **tek kullanımlıktır**: ikinci kez, süresi dolmuşken ya da iptal edilmişken aynı yanıtı alır: `404 CONNECT_TOKEN_INVALID` (hangisi olduğu söylenmez). Kurulum yarıda reddedilirse (ör. 5 bağlantı sınırı) kod harcanmaz.
-     * - Anahtar "E-ticaret" rolündedir ve bağlantının programıyla sınırlıdır: kartları ve ayarları görür, yalnız kendi bağlantısını görür ve yönetir, o programdan kart verir. Bağlantı silinince anahtar da iptal edilir. Test ortamının kodu `rwk_test_` anahtarı verir (`mode`).
+     * - Anahtar "E-ticaret" rolündedir ve bağlantının programıyla sınırlıdır: kartları ve ayarları görür, yalnız kendi bağlantısını görür ve yönetir, o programdan kart verir. Kodu alan kişi Görüntüleme ve Kasa'yı seçtiyse anahtar onları da alır (`apiKey.abilities`, ADR 178); `GET /v1/me` her an yeniden söyler. Bağlantı silinince anahtar da iptal edilir. Test ortamının kodu `rwk_test_` anahtarı verir (`mode`).
      * - `shopName` anahtarın panelde görünen adına eklenir ("WooCommerce · …"). IP başına 10 dakikada 20 istek.
      *
      * **Kimlik:** kimlik gerekmez.
@@ -9037,10 +9479,37 @@ trait Methods
      *         },
      *         lastDelivery: array{
      *             at: string,
-     *             result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+     *             result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
      *         }|null,
      *         lastRefusal: array{at: string, reason: 'bad_signature'}|null,
-     *         pluginKey: array{id: string, prefix: string, name: string}|null,
+     *         pluginKey: array{
+     *             id: string,
+     *             prefix: string,
+     *             name: string,
+     *             abilities: list<'view'|'till'>,
+     *             tillLocationId: string|null,
+     *             tillLocationName: string|null,
+     *             tillArchived: bool,
+     *         }|null,
+     *         shopName: string|null,
+     *         settings: array{
+     *             tax: array{
+     *                 giftcard: 'payment'|'discount',
+     *                 cashback: 'payment'|'discount',
+     *                 voucher: 'payment'|'discount',
+     *             },
+     *             refundReverses: 'code_orders'|'all'|'never',
+     *             holdDays: int,
+     *         },
+     *         accepts: array{
+     *             programIds: list<string>,
+     *             ceiling: list<array{
+     *                 id: string,
+     *                 name: string,
+     *                 type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *             }>|null,
+     *         },
+     *         unbacked: array{count: int, lastAt: string|null},
      *     },
      *     secret: string,
      *     apiKey: array{
@@ -9049,6 +9518,8 @@ trait Methods
      *         name: string,
      *         role: string,
      *         token: string,
+     *         abilities: list<'view'|'till'>,
+     *         tillLocationId: string|null,
      *     },
      *     mode: 'live'|'test',
      * }
@@ -9082,10 +9553,37 @@ trait Methods
          *         },
          *         lastDelivery: array{
          *             at: string,
-         *             result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body',
+         *             result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
          *         }|null,
          *         lastRefusal: array{at: string, reason: 'bad_signature'}|null,
-         *         pluginKey: array{id: string, prefix: string, name: string}|null,
+         *         pluginKey: array{
+         *             id: string,
+         *             prefix: string,
+         *             name: string,
+         *             abilities: list<'view'|'till'>,
+         *             tillLocationId: string|null,
+         *             tillLocationName: string|null,
+         *             tillArchived: bool,
+         *         }|null,
+         *         shopName: string|null,
+         *         settings: array{
+         *             tax: array{
+         *                 giftcard: 'payment'|'discount',
+         *                 cashback: 'payment'|'discount',
+         *                 voucher: 'payment'|'discount',
+         *             },
+         *             refundReverses: 'code_orders'|'all'|'never',
+         *             holdDays: int,
+         *         },
+         *         accepts: array{
+         *             programIds: list<string>,
+         *             ceiling: list<array{
+         *                 id: string,
+         *                 name: string,
+         *                 type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *             }>|null,
+         *         },
+         *         unbacked: array{count: int, lastAt: string|null},
          *     },
          *     secret: string,
          *     apiKey: array{
@@ -9094,12 +9592,1498 @@ trait Methods
          *         name: string,
          *         role: string,
          *         token: string,
+         *         abilities: list<'view'|'till'>,
+         *         tillLocationId: string|null,
          *     },
          *     mode: 'live'|'test',
          * } $data
          */
         $data = $this->call('connectShop', $args);
         return $data;
+    }
+
+    /**
+     * Eklentinin yetkilerini değiştir
+     *
+     * Bağlantı koduyla kurulmuş bir bağlantının eklenti anahtarının bağlantı dışında yapabildikleri (ADR 178): Görüntüleme (`view`) ve tek bir şubenin Kasası (`tillLocationId`; null = kapalı). Değişiklik mevcut anahtara **hemen** uygulanır; eklentinin yeniden bağlanması gerekmez, eklenti `GET /v1/me` ile okur.
+     * - Yalnız ekip oturumuyla: bir anahtarın yetkisini değiştirmek, anahtar oluşturmak gibidir. Bağlantının programında `shops.manage` (ya da `apikeys.manage`), ayrıca `apikeys.manage`, `team.manage` ve alt küme kuralı (verilen yetkileri kişi o şubelerde taşımalı) ister; kişinin şifresi (`password`) ve değişikliğin nedeni (`reason`, en fazla 200 karakter, yalnız ekibin gördüğü işlem kaydına yazılır) istenir.
+     * - Bağlantıyı eklenti kurmadıysa ya da eklentinin anahtarı iptal edildiyse `409 NO_PLUGIN_KEY`.
+     * - **Eklentinin yetkileri** (ADR 178), kodu alan kişi seçer; sonra bağlantının sayfasından ya da `PUT /v1/shops/{id}/plugin-abilities` ile değişir:
+     *   - `view` (Görüntüleme; bu çağrıda gönderilmezse kapalı, panelin formunda işaretli gelir): bağlantının programında `passes.read` ve `analytics.read` — kartın durumu (`GET /v1/passes/{serial}`), programın sayıları (`GET /v1/analytics?programId=`) ve kartlardaki son işlemler (`GET /v1/activity`). Müşterinin adı, e-postası ya da telefonu gelmez; ekip üyesinin e-postası da.
+     *   - `tillLocationId` (Kasa, varsayılan kapalı): bu tek şubede ve bağlantının programında `scan.use` — `GET /v1/passes/{serial}/till`, `POST …/sale`, `POST …/actions`. Hediye kartı yüklemek (`load`) yine `instruments.issue` ister ve verilmez. Kapalı başlar: açıkken WooCommerce'i yönetebilen herkes o şubede müşterilerin bakiyesini harcatabilir.
+     *   - Kişi bu yetkileri verebilmelidir (`team.manage` ve alt küme kuralı: Görüntüleme yetkilerini tüm şubelerde, `scan.use`'u o şubede taşımalı).
+     *
+     * **Kimlik:** ekip oturumu.
+     *
+     * **Yetki:** `shops.manage` — Mağaza bağlantısı yönetimi.
+     *
+     * `PUT /v1/shops/{id}/plugin-abilities`
+     *
+     * Arguments:
+     * - `body.tillLocationId`: Kasanın şubesi; null = kasa kapalı
+     * - `body.reason`: Neden (yalnız ekibiniz görür)
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-setShopPluginAbilities API referansı
+     *
+     * @param array{
+     *     params: array{id: string},
+     *     body: array{
+     *         view: bool,
+     *         tillLocationId: string|null,
+     *         reason: string,
+     *         password: string,
+     *     },
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     id: string,
+     *     platform: 'shopify'|'woocommerce',
+     *     programId: string,
+     *     programName: string,
+     *     programType: string,
+     *     currency: string,
+     *     rule: 'order'|'amount',
+     *     perAmountMinor: int,
+     *     step: int,
+     *     enabled: bool,
+     *     lastOrderAt: string|null,
+     *     createdAt: string,
+     *     webhookUrl: string,
+     *     orders: array{
+     *         credited: int,
+     *         unmatched: int,
+     *         below: int,
+     *         paused: int,
+     *         currency: int,
+     *     },
+     *     lastDelivery: array{
+     *         at: string,
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
+     *     }|null,
+     *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+     *     pluginKey: array{
+     *         id: string,
+     *         prefix: string,
+     *         name: string,
+     *         abilities: list<'view'|'till'>,
+     *         tillLocationId: string|null,
+     *         tillLocationName: string|null,
+     *         tillArchived: bool,
+     *     }|null,
+     *     shopName: string|null,
+     *     settings: array{
+     *         tax: array{
+     *             giftcard: 'payment'|'discount',
+     *             cashback: 'payment'|'discount',
+     *             voucher: 'payment'|'discount',
+     *         },
+     *         refundReverses: 'code_orders'|'all'|'never',
+     *         holdDays: int,
+     *     },
+     *     accepts: array{
+     *         programIds: list<string>,
+     *         ceiling: list<array{
+     *             id: string,
+     *             name: string,
+     *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *         }>|null,
+     *     },
+     *     unbacked: array{count: int, lastAt: string|null},
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function setShopPluginAbilities(array $args): array
+    {
+        /**
+         * @var array{
+         *     id: string,
+         *     platform: 'shopify'|'woocommerce',
+         *     programId: string,
+         *     programName: string,
+         *     programType: string,
+         *     currency: string,
+         *     rule: 'order'|'amount',
+         *     perAmountMinor: int,
+         *     step: int,
+         *     enabled: bool,
+         *     lastOrderAt: string|null,
+         *     createdAt: string,
+         *     webhookUrl: string,
+         *     orders: array{
+         *         credited: int,
+         *         unmatched: int,
+         *         below: int,
+         *         paused: int,
+         *         currency: int,
+         *     },
+         *     lastDelivery: array{
+         *         at: string,
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
+         *     }|null,
+         *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+         *     pluginKey: array{
+         *         id: string,
+         *         prefix: string,
+         *         name: string,
+         *         abilities: list<'view'|'till'>,
+         *         tillLocationId: string|null,
+         *         tillLocationName: string|null,
+         *         tillArchived: bool,
+         *     }|null,
+         *     shopName: string|null,
+         *     settings: array{
+         *         tax: array{
+         *             giftcard: 'payment'|'discount',
+         *             cashback: 'payment'|'discount',
+         *             voucher: 'payment'|'discount',
+         *         },
+         *         refundReverses: 'code_orders'|'all'|'never',
+         *         holdDays: int,
+         *     },
+         *     accepts: array{
+         *         programIds: list<string>,
+         *         ceiling: list<array{
+         *             id: string,
+         *             name: string,
+         *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *         }>|null,
+         *     },
+         *     unbacked: array{count: int, lastAt: string|null},
+         * } $data
+         */
+        $data = $this->call('setShopPluginAbilities', $args);
+        return $data;
+    }
+
+    /**
+     * Ödeme adımındaki kodu sor
+     *
+     * Müşterinin kupon alanına yazdığı Rewloy kodunun bu mağazada ne verdiğini söyler; değer ayırmaz. Kodun ilk sorulması onu bu bağlantıya bağlar (başka bir mağazada `CODE_USED`). Kod oluşturulduktan sonra 15 dakika içinde ilk kez sorulmalı, 45 dakika içinde bir siparişe bağlanmalıdır.
+     * - `balance` (hediye kartı, cashback): `maxMinor` en fazla ayrılabilecek tutardır — müşterinin seçtiği tutar ve kartın kullanılabilir bakiyesinden küçüğü. `percent`: indirim yüzdesi. `amount`: kuponun online tutarı. `link` (damga, puan, VIP): değer yok, sipariş bu karta işlenir.
+     * - `tax`: bağlantının ayarına göre değerin uygulanışı: `discount` vergiden önce kupon olarak, `payment` vergiden sonra ödeme gibi (eksi ücret). `link` için null.
+     * - Bilinmeyen, iptal edilmiş ve başka işletmenin kodu aynı `404 CODE_INVALID` yanıtını alır.
+     * - Sınırlar: bağlantı başına 10 dakikada 600 soru; bağlantı başına saatte 30 geçersiz koddan sonra geçersiz kodlar o saatin sonuna kadar `429 RATE_LIMITED` (geçerli bir kod yine çalışır). `shopper` gönderilirse aynı alışverişçiye ayrıca 10 dakikada 30 soru ve saatte 10 geçersiz kod: bir alışverişçinin denemeleri ötekilerin bütçesini bitirmez.
+     * - `orderId` (isteğe bağlı): kodu soran siparişin numarası. Kod bu siparişte zaten kullanılıyorsa `CODE_USED` yerine 200 döner: değerler siparişin gözünden (kendi ayırması kullanılabilir sayılır) ve `redemption` bu siparişin kod kullanımı (`listOrderRedemptions` ile aynı). Kullanım ayırmayı geçtiyse (düşüldü, iade edildi, karşılıksız) değerler kullanımın kaydından gelir. `orderId` gönderilince `redemption` her zaman vardır: kod bu siparişin değilse `null`. Süresi dolmuş ya da işletmenin elle bıraktığı bir ayırma `409 CODE_RELEASED`.
+     * - `shopper` (isteğe bağlı): alışverişçiyi kişisel veri taşımadan ayıran bir değer — ör. WooCommerce oturum anahtarının ya da müşteri numarasının bir sırla HMAC'i, base64url ya da hex, 8–64 karakter (`^[A-Za-z0-9_-]{8,64}$`). Rewloy saklamaz, yalnız sayaç anahtarında kullanır; e-posta ya da adın kendisini göndermeyin.
+     * - Kartın programında `shops.redeem` ister ("E-ticaret" rolünde kendi programı için vardır; işletmenin diğer programları için "E-ticaret · harcama"). Bağlantı koduyla kurulmuş bir eklentinin anahtarı yalnız kendi bağlantısında çağırabilir.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `shops.redeem` — Online ödemede kart kodu kullanımı.
+     *
+     * Salt-okunur hesapta da çalışır.
+     *
+     * `POST /v1/shops/{id}/checkout-codes/quote`
+     *
+     * Arguments:
+     * - `body.code`: Müşterinin yazdığı kod: `RW-XXXX-XXXX` (büyük/küçük harf, boşluk ve tire fark etmez)
+     * - `body.currency`: Siparişin para birimi (ISO 4217, örn. TRY)
+     * - `body.shopper`: İsteğe bağlı: alışverişçinin kişisel veri taşımayan anahtarı (ör. WooCommerce oturumunun HMAC'i); kendi soru bütçesi olur
+     * - `body.orderId`: İsteğe bağlı: kodu soran sipariş. Kod bu siparişteyse `CODE_USED` yerine bu siparişin kullanımı döner (ADR 180).
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-quoteCheckoutCode API referansı
+     *
+     * @param array{
+     *     params: array{id: string},
+     *     body: array{
+     *         code: string,
+     *         currency: string,
+     *         shopper?: string,
+     *         orderId?: string,
+     *     },
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     kind: 'balance'|'percent'|'amount'|'link',
+     *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *     programId: string,
+     *     programName: string,
+     *     currency: string,
+     *     maxMinor: int|null,
+     *     percent: int|null,
+     *     amountMinor: int|null,
+     *     tax: 'payment'|'discount'|null,
+     *     cardId: string,
+     *     cardLast4: string,
+     *     codeLast4: string,
+     *     firstUseBy: string,
+     *     attachBy: string,
+     *     redemption?: array{
+     *         id: string,
+     *         orderId: string,
+     *         codeLast4: string,
+     *         cardId: string|null,
+     *         cardLast4: string,
+     *         kind: 'balance'|'percent'|'amount'|'link',
+     *         type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *         programId: string,
+     *         programName: string,
+     *         amountMinor: int,
+     *         percent: int|null,
+     *         currency: string,
+     *         state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+     *         generation: int,
+     *         heldUntil: string|null,
+     *         capturedMinor: int,
+     *         refundedMinor: int,
+     *         late: bool,
+     *         releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+     *         createdAt: string,
+     *         capturedAt: string|null,
+     *         releasedAt: string|null,
+     *     }|null,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function quoteCheckoutCode(array $args): array
+    {
+        /**
+         * @var array{
+         *     kind: 'balance'|'percent'|'amount'|'link',
+         *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *     programId: string,
+         *     programName: string,
+         *     currency: string,
+         *     maxMinor: int|null,
+         *     percent: int|null,
+         *     amountMinor: int|null,
+         *     tax: 'payment'|'discount'|null,
+         *     cardId: string,
+         *     cardLast4: string,
+         *     codeLast4: string,
+         *     firstUseBy: string,
+         *     attachBy: string,
+         *     redemption?: array{
+         *         id: string,
+         *         orderId: string,
+         *         codeLast4: string,
+         *         cardId: string|null,
+         *         cardLast4: string,
+         *         kind: 'balance'|'percent'|'amount'|'link',
+         *         type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *         programId: string,
+         *         programName: string,
+         *         amountMinor: int,
+         *         percent: int|null,
+         *         currency: string,
+         *         state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+         *         generation: int,
+         *         heldUntil: string|null,
+         *         capturedMinor: int,
+         *         refundedMinor: int,
+         *         late: bool,
+         *         releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+         *         createdAt: string,
+         *         capturedAt: string|null,
+         *         releasedAt: string|null,
+         *     }|null,
+         * } $data
+         */
+        $data = $this->call('quoteCheckoutCode', $args);
+        return $data;
+    }
+
+    /**
+     * Siparişin kod kullanımları
+     *
+     * Bir siparişin Rewloy kodlarının şimdiki hâli, ilk kullanılan önce. `shops.read` ister.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `shops.read` — Mağaza bağlantılarını görüntüleme.
+     *
+     * `GET /v1/shops/{id}/orders/{orderId}/redemptions`
+     *
+     * Arguments:
+     * - `params.orderId`: Mağazanın sipariş numarası (WooCommerce: sipariş kimliği)
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-listOrderRedemptions API referansı
+     *
+     * @param array{
+     *     params: array{id: string, orderId: string},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return list<array{
+     *     id: string,
+     *     orderId: string,
+     *     codeLast4: string,
+     *     cardId: string|null,
+     *     cardLast4: string,
+     *     kind: 'balance'|'percent'|'amount'|'link',
+     *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *     programId: string,
+     *     programName: string,
+     *     amountMinor: int,
+     *     percent: int|null,
+     *     currency: string,
+     *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+     *     generation: int,
+     *     heldUntil: string|null,
+     *     capturedMinor: int,
+     *     refundedMinor: int,
+     *     late: bool,
+     *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+     *     createdAt: string,
+     *     capturedAt: string|null,
+     *     releasedAt: string|null,
+     * }>
+     *
+     * @throws RewloyException
+     */
+    public function listOrderRedemptions(array $args): array
+    {
+        /**
+         * @var list<array{
+         *     id: string,
+         *     orderId: string,
+         *     codeLast4: string,
+         *     cardId: string|null,
+         *     cardLast4: string,
+         *     kind: 'balance'|'percent'|'amount'|'link',
+         *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *     programId: string,
+         *     programName: string,
+         *     amountMinor: int,
+         *     percent: int|null,
+         *     currency: string,
+         *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+         *     generation: int,
+         *     heldUntil: string|null,
+         *     capturedMinor: int,
+         *     refundedMinor: int,
+         *     late: bool,
+         *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+         *     createdAt: string,
+         *     capturedAt: string|null,
+         *     releasedAt: string|null,
+         * }> $data
+         */
+        $data = $this->call('listOrderRedemptions', $args);
+        return $data;
+    }
+
+    /**
+     * Siparişe kodu bağla ve değeri ayır
+     *
+     * Sipariş verildiğinde, ödeme alınmadan önce: kodu bu siparişe bağlar ve kartın değerini ayırır (`held`). Ayrılan tutar kartın kullanılabilir bakiyesinden hemen düşer — kasada, POS satışında ve cüzdanda da. Ödenince `capture`, iptal ya da başarısızlıkta `release`; ödenmezse bağlantının bekletme süresi (`settings.holdDays`, varsayılan 7 gün) sonunda karta kendiliğinden döner.
+     * - `amountMinor`: `balance` kartta zorunlu — siparişe gerçekten uygulanan tutar (en fazla `quote` yanıtındaki `maxMinor`); kuponda ve indirim kartında bilgi için uygulanan indirim; `link` kartta yok sayılır.
+     * - `orderTotalMinor` (isteğe bağlı, önerilir): siparişin indirimden önceki toplamı, kuruş. Verilirse `amountMinor` onu aşamaz (`400 VALIDATION`): yüzde kodunda bile indirim siparişten büyük kaydedilmez.
+     * - Aynı sipariş ve aynı kodla tekrar: değişmeden döner (200). Ayrılmışken başka bir tutar: yeniden ayrılır (`generation` artar), `heldUntil` değişmez. Mağazanın ya da siparişin bıraktığı (`release`) bir ayırmayı aynı sipariş yalnız kodun 45 dakikası (`attachBy`) içinde yeniden ayırabilir; süresi dolmuş (`expired`) ya da işletmenin elle bıraktığı bir ayırma bir daha ayrılmaz (`409 CODE_RELEASED`, `details.reason`: `expired` ya da `merchant`; müşteri yeni kod oluşturur — "başka bir siparişte kullanıldı" denmesin). Başka bir sipariş: `CODE_USED`. Bir siparişte en fazla 3 kod, her karttan bir.
+     * - Ret olursa ödeme alınmamalıdır. Yanıt alınamazsa aynı çağrı güvenle yinelenir; yine alınamazsa siparişi reddedin ve `release` çağırın (ayırma yoksa da zararsızdır).
+     * - Kartın programında `shops.redeem` ister ("E-ticaret" rolünde kendi programı için vardır; işletmenin diğer programları için "E-ticaret · harcama"). Bağlantı koduyla kurulmuş bir eklentinin anahtarı yalnız kendi bağlantısında çağırabilir.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `shops.redeem` — Online ödemede kart kodu kullanımı.
+     *
+     * Salt-okunur hesapta da çalışır.
+     *
+     * `POST /v1/shops/{id}/orders/{orderId}/redemptions`
+     *
+     * Arguments:
+     * - `params.orderId`: Mağazanın sipariş numarası (WooCommerce: sipariş kimliği)
+     * - `body.code`: Müşterinin yazdığı kod: `RW-XXXX-XXXX` (büyük/küçük harf, boşluk ve tire fark etmez)
+     * - `body.currency`: Siparişin para birimi (ISO 4217, örn. TRY)
+     * - `body.orderTotalMinor`: Siparişin indirimden önceki toplamı (kuruş); verilirse amountMinor onu aşamaz
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-holdCheckoutCode API referansı
+     *
+     * @param array{
+     *     params: array{id: string, orderId: string},
+     *     body: array{
+     *         code: string,
+     *         currency: string,
+     *         amountMinor?: int,
+     *         orderTotalMinor?: int,
+     *     },
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     id: string,
+     *     orderId: string,
+     *     codeLast4: string,
+     *     cardId: string|null,
+     *     cardLast4: string,
+     *     kind: 'balance'|'percent'|'amount'|'link',
+     *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *     programId: string,
+     *     programName: string,
+     *     amountMinor: int,
+     *     percent: int|null,
+     *     currency: string,
+     *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+     *     generation: int,
+     *     heldUntil: string|null,
+     *     capturedMinor: int,
+     *     refundedMinor: int,
+     *     late: bool,
+     *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+     *     createdAt: string,
+     *     capturedAt: string|null,
+     *     releasedAt: string|null,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function holdCheckoutCode(array $args): array
+    {
+        /**
+         * @var array{
+         *     id: string,
+         *     orderId: string,
+         *     codeLast4: string,
+         *     cardId: string|null,
+         *     cardLast4: string,
+         *     kind: 'balance'|'percent'|'amount'|'link',
+         *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *     programId: string,
+         *     programName: string,
+         *     amountMinor: int,
+         *     percent: int|null,
+         *     currency: string,
+         *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+         *     generation: int,
+         *     heldUntil: string|null,
+         *     capturedMinor: int,
+         *     refundedMinor: int,
+         *     late: bool,
+         *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+         *     createdAt: string,
+         *     capturedAt: string|null,
+         *     releasedAt: string|null,
+         * } $data
+         */
+        $data = $this->call('holdCheckoutCode', $args);
+        return $data;
+    }
+
+    /**
+     * Ödenen siparişin ayırmasını düş
+     *
+     * Sipariş ödendiğinde (`processing` ya da `completed`): siparişin ayrılmış her kod kullanımı düşülür — bakiyeli kartta ayırma bırakılır ve tutar harcanır (`captured`), kupon ve indirim kartında kullanım sayılır. Hepsi tek işlemde; tekrar çağrı yapılacak bir şey bulamaz ve aynı sonucu döndürür. Mağazanın imzalı sipariş bildirimi de aynı işi yapar: hangisi önce gelirse o yapar.
+     * - `captures`: bir kullanımda ayrılandan azını düşmek için (`amountMinor`, en az 1); kalanı karta döner. Verilmezse ayrılanın tamamı.
+     * - Süresi dolmuş ya da bırakılmış bir ayırma için ödeme gelirse kartta değer hâlâ varsa düşülür (`late: true`); yoksa hiçbir şey düşülmez, kullanım `unbacked` olur ve yanıt `409 HOLD_UNBACKED` (`details.redemptions` son hâl) — bakiye hiçbir zaman eksiye düşmez.
+     * - Kart bu arada kapatıldıysa `409 PASS_INACTIVE`: ayırma süresi dolana dek durur. Süresi dolmuş ya da bırakılmış bir ayırmanın kartı kapandıysa (ör. kasada sıfıra harcanan hediye kartı) kullanım `unbacked` olur (`409 HOLD_UNBACKED`).
+     * - Mağazanın imzalı `processing`/`completed` bildirimi bu çağrıdan önce gelirse ayrılanın TAMAMI düşülür (bildirimde kısmi tutar yoktur); sonra gelen kısmi `captures` bir şey değiştirmez. Kısmi düşüm isteyen eklenti, siparişi ödenmiş saymadan önce bu çağrıyı yapmalıdır.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `shops.redeem` — Online ödemede kart kodu kullanımı.
+     *
+     * Salt-okunur hesapta da çalışır.
+     *
+     * `POST /v1/shops/{id}/orders/{orderId}/capture`
+     *
+     * Arguments:
+     * - `params.orderId`: Mağazanın sipariş numarası (WooCommerce: sipariş kimliği)
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-captureCheckoutOrder API referansı
+     *
+     * @param array{
+     *     params: array{id: string, orderId: string},
+     *     body?: array{captures?: list<array{id: string, amountMinor: int}>},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return list<array{
+     *     id: string,
+     *     orderId: string,
+     *     codeLast4: string,
+     *     cardId: string|null,
+     *     cardLast4: string,
+     *     kind: 'balance'|'percent'|'amount'|'link',
+     *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *     programId: string,
+     *     programName: string,
+     *     amountMinor: int,
+     *     percent: int|null,
+     *     currency: string,
+     *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+     *     generation: int,
+     *     heldUntil: string|null,
+     *     capturedMinor: int,
+     *     refundedMinor: int,
+     *     late: bool,
+     *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+     *     createdAt: string,
+     *     capturedAt: string|null,
+     *     releasedAt: string|null,
+     * }>
+     *
+     * @throws RewloyException
+     */
+    public function captureCheckoutOrder(array $args): array
+    {
+        /**
+         * @var list<array{
+         *     id: string,
+         *     orderId: string,
+         *     codeLast4: string,
+         *     cardId: string|null,
+         *     cardLast4: string,
+         *     kind: 'balance'|'percent'|'amount'|'link',
+         *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *     programId: string,
+         *     programName: string,
+         *     amountMinor: int,
+         *     percent: int|null,
+         *     currency: string,
+         *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+         *     generation: int,
+         *     heldUntil: string|null,
+         *     capturedMinor: int,
+         *     refundedMinor: int,
+         *     late: bool,
+         *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+         *     createdAt: string,
+         *     capturedAt: string|null,
+         *     releasedAt: string|null,
+         * }> $data
+         */
+        $data = $this->call('captureCheckoutOrder', $args);
+        return $data;
+    }
+
+    /**
+     * Siparişin ayırmasını bırak
+     *
+     * Sipariş iptal edildiğinde ya da başarısız olduğunda (ya da mağaza siparişi reddederken): ayrılmış her kod kullanımının tutarı karta döner (`released`). Ayrılmış olmayanlara dokunulmaz; tekrar çağrı aynı sonucu döndürür. `reason`: `cancelled`, `failed` ya da `shop` (varsayılan). Mağazanın imzalı bildirimi `cancelled`/`failed` durumunda da aynı işi yapar.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `shops.redeem` — Online ödemede kart kodu kullanımı.
+     *
+     * Salt-okunur hesapta da çalışır.
+     *
+     * `POST /v1/shops/{id}/orders/{orderId}/release`
+     *
+     * Arguments:
+     * - `params.orderId`: Mağazanın sipariş numarası (WooCommerce: sipariş kimliği)
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-releaseCheckoutOrder API referansı
+     *
+     * @param array{
+     *     params: array{id: string, orderId: string},
+     *     body?: array{reason?: 'cancelled'|'failed'|'shop'},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return list<array{
+     *     id: string,
+     *     orderId: string,
+     *     codeLast4: string,
+     *     cardId: string|null,
+     *     cardLast4: string,
+     *     kind: 'balance'|'percent'|'amount'|'link',
+     *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *     programId: string,
+     *     programName: string,
+     *     amountMinor: int,
+     *     percent: int|null,
+     *     currency: string,
+     *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+     *     generation: int,
+     *     heldUntil: string|null,
+     *     capturedMinor: int,
+     *     refundedMinor: int,
+     *     late: bool,
+     *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+     *     createdAt: string,
+     *     capturedAt: string|null,
+     *     releasedAt: string|null,
+     * }>
+     *
+     * @throws RewloyException
+     */
+    public function releaseCheckoutOrder(array $args): array
+    {
+        /**
+         * @var list<array{
+         *     id: string,
+         *     orderId: string,
+         *     codeLast4: string,
+         *     cardId: string|null,
+         *     cardLast4: string,
+         *     kind: 'balance'|'percent'|'amount'|'link',
+         *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *     programId: string,
+         *     programName: string,
+         *     amountMinor: int,
+         *     percent: int|null,
+         *     currency: string,
+         *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+         *     generation: int,
+         *     heldUntil: string|null,
+         *     capturedMinor: int,
+         *     refundedMinor: int,
+         *     late: bool,
+         *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+         *     createdAt: string,
+         *     capturedAt: string|null,
+         *     releasedAt: string|null,
+         * }> $data
+         */
+        $data = $this->call('releaseCheckoutOrder', $args);
+        return $data;
+    }
+
+    /**
+     * İade edilen siparişin tutarını karta geri yükle
+     *
+     * - **Tam iade** (gövde boş): düşülen her bakiyenin henüz iade edilmemiş kısmı karta yeni bir kayıtla geri yüklenir (bir kez); kullanımlar `refunded` olur. Kullanılmış tek kullanımlık kupon yeniden açılmaz. Bakiyesi bitip kapanan hediye kartı yeniden açılır. Siparişin bu karta kazandırdığı (damga, puan, ziyaret, cashback) bağlantının `refundReverses` ayarına göre geri alınır, hiçbir zaman sıfırın altına inmeden: yanıtta `unearned` (zaten harcanmış kısım `short`). Mağazanın imzalı `refunded` bildirimi de aynısını yapar.
+     * - **Kısmi iade** (`amountMinor`): kendiliğinden yapılmaz; elle bir kullanıma (`redemptionId`, siparişte tek bakiyeli kullanım varsa gerekmez) en fazla düşülen − iade edilen kadar. `Idempotency-Key` zorunludur: aynı anahtar ve aynı tutarla tekrar iki kez yüklemez; aynı anahtar başka bir tutarla `422 IDEMPOTENCY_KEY_REUSED`. Kazanç geri alınmaz.
+     * - Siparişin kazancı bir kez geri alınır: ilk iade sıfır geri aldıysa da (kart kazandığını harcamıştı) sonraki çağrılar yeniden almaz, ilk sonucu döndürür.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `shops.redeem` — Online ödemede kart kodu kullanımı.
+     *
+     * Salt-okunur hesapta da çalışır.
+     *
+     * `POST /v1/shops/{id}/orders/{orderId}/refund`
+     *
+     * Arguments:
+     * - `params.orderId`: Mağazanın sipariş numarası (WooCommerce: sipariş kimliği)
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-refundCheckoutOrder API referansı
+     *
+     * @param array{
+     *     params: array{id: string, orderId: string},
+     *     body?: array{amountMinor?: int, redemptionId?: string},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     redemptions: list<array{
+     *         id: string,
+     *         orderId: string,
+     *         codeLast4: string,
+     *         cardId: string|null,
+     *         cardLast4: string,
+     *         kind: 'balance'|'percent'|'amount'|'link',
+     *         type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *         programId: string,
+     *         programName: string,
+     *         amountMinor: int,
+     *         percent: int|null,
+     *         currency: string,
+     *         state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+     *         generation: int,
+     *         heldUntil: string|null,
+     *         capturedMinor: int,
+     *         refundedMinor: int,
+     *         late: bool,
+     *         releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+     *         createdAt: string,
+     *         capturedAt: string|null,
+     *         releasedAt: string|null,
+     *     }>,
+     *     unearned: array{
+     *         cardLast4: string,
+     *         unit: string,
+     *         earned: int,
+     *         reversed: int,
+     *         short: int,
+     *     }|null,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function refundCheckoutOrder(array $args): array
+    {
+        /**
+         * @var array{
+         *     redemptions: list<array{
+         *         id: string,
+         *         orderId: string,
+         *         codeLast4: string,
+         *         cardId: string|null,
+         *         cardLast4: string,
+         *         kind: 'balance'|'percent'|'amount'|'link',
+         *         type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *         programId: string,
+         *         programName: string,
+         *         amountMinor: int,
+         *         percent: int|null,
+         *         currency: string,
+         *         state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+         *         generation: int,
+         *         heldUntil: string|null,
+         *         capturedMinor: int,
+         *         refundedMinor: int,
+         *         late: bool,
+         *         releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+         *         createdAt: string,
+         *         capturedAt: string|null,
+         *         releasedAt: string|null,
+         *     }>,
+         *     unearned: array{
+         *         cardLast4: string,
+         *         unit: string,
+         *         earned: int,
+         *         reversed: int,
+         *         short: int,
+         *     }|null,
+         * } $data
+         */
+        $data = $this->call('refundCheckoutOrder', $args);
+        return $data;
+    }
+
+    /**
+     * Bağlantının kod kullanımları
+     *
+     * Bu mağazada kullanılan Rewloy kodları, yeniden eskiye; `state` ile süzülür (`unbacked`: karşılıksız kalanlar). Sipariş numarası mağazanındır; kişisel veri yoktur. `shops.read` ister.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `shops.read` — Mağaza bağlantılarını görüntüleme.
+     *
+     * `GET /v1/shops/{id}/redemptions`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-listShopRedemptions API referansı
+     *
+     * @param array{
+     *     params: array{id: string},
+     *     query?: array{
+     *         state?: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked'|null,
+     *         page?: int|null,
+     *         limit?: int|null,
+     *     },
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     data: list<array{
+     *         id: string,
+     *         orderId: string,
+     *         codeLast4: string,
+     *         cardId: string|null,
+     *         cardLast4: string,
+     *         kind: 'balance'|'percent'|'amount'|'link',
+     *         type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *         programId: string,
+     *         programName: string,
+     *         amountMinor: int,
+     *         percent: int|null,
+     *         currency: string,
+     *         state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+     *         generation: int,
+     *         heldUntil: string|null,
+     *         capturedMinor: int,
+     *         refundedMinor: int,
+     *         late: bool,
+     *         releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+     *         createdAt: string,
+     *         capturedAt: string|null,
+     *         releasedAt: string|null,
+     *     }>,
+     *     meta: array{page: int, pageSize: int, total: int},
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function listShopRedemptions(array $args): array
+    {
+        /**
+         * @var array{
+         *     data: list<array{
+         *         id: string,
+         *         orderId: string,
+         *         codeLast4: string,
+         *         cardId: string|null,
+         *         cardLast4: string,
+         *         kind: 'balance'|'percent'|'amount'|'link',
+         *         type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *         programId: string,
+         *         programName: string,
+         *         amountMinor: int,
+         *         percent: int|null,
+         *         currency: string,
+         *         state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+         *         generation: int,
+         *         heldUntil: string|null,
+         *         capturedMinor: int,
+         *         refundedMinor: int,
+         *         late: bool,
+         *         releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+         *         createdAt: string,
+         *         capturedAt: string|null,
+         *         releasedAt: string|null,
+         *     }>,
+         *     meta: array{page: int, pageSize: int, total: int},
+         * } $data
+         */
+        $data = $this->call('listShopRedemptions', $args);
+        return $data;
+    }
+
+    /**
+     * Ayrılmış tutarı elle bırak
+     *
+     * İşletmenin kararı: ayrılmış (`held`) bir kod kullanımının tutarı karta döner (`released`, neden `merchant`); mağaza bu kodu bu siparişe bir daha ayıramaz. Önce neden: defter kaydının notu ve erişim kaydı olur. Kartın programında `scan.adjust` (manuel bakiye düzeltme) ister; yalnız ekip oturumu. Mağaza siparişi sonra öderse ödeme geç düşüm olarak denenir (kartta değer yoksa karşılıksız kalır).
+     *
+     * **Kimlik:** ekip oturumu.
+     *
+     * **Yetki:** `scan.adjust` — Manuel bakiye düzeltme.
+     *
+     * `POST /v1/shops/{id}/redemptions/{redemptionId}/release`
+     *
+     * Arguments:
+     * - `body.reason`: Neden (kayda geçer, defter kaydının notu olur)
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-releaseShopRedemption API referansı
+     *
+     * @param array{
+     *     params: array{id: string, redemptionId: string},
+     *     body: array{reason: string},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     id: string,
+     *     orderId: string,
+     *     codeLast4: string,
+     *     cardId: string|null,
+     *     cardLast4: string,
+     *     kind: 'balance'|'percent'|'amount'|'link',
+     *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *     programId: string,
+     *     programName: string,
+     *     amountMinor: int,
+     *     percent: int|null,
+     *     currency: string,
+     *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+     *     generation: int,
+     *     heldUntil: string|null,
+     *     capturedMinor: int,
+     *     refundedMinor: int,
+     *     late: bool,
+     *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+     *     createdAt: string,
+     *     capturedAt: string|null,
+     *     releasedAt: string|null,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function releaseShopRedemption(array $args): array
+    {
+        /**
+         * @var array{
+         *     id: string,
+         *     orderId: string,
+         *     codeLast4: string,
+         *     cardId: string|null,
+         *     cardLast4: string,
+         *     kind: 'balance'|'percent'|'amount'|'link',
+         *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *     programId: string,
+         *     programName: string,
+         *     amountMinor: int,
+         *     percent: int|null,
+         *     currency: string,
+         *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+         *     generation: int,
+         *     heldUntil: string|null,
+         *     capturedMinor: int,
+         *     refundedMinor: int,
+         *     late: bool,
+         *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+         *     createdAt: string,
+         *     capturedAt: string|null,
+         *     releasedAt: string|null,
+         * } $data
+         */
+        $data = $this->call('releaseShopRedemption', $args);
+        return $data;
+    }
+
+    /**
+     * Elle iade
+     *
+     * Kısmi iade gibi kendiliğinden yapılmayan bir iade: düşülmüş bir bakiyeden en fazla düşülen − iade edilen kadarı karta yeni bir kayıtla geri yüklenir. Önce neden; kartın programında `scan.adjust` ister, yalnız ekip oturumu. `Idempotency-Key` zorunludur: aynı anahtarla tekrar bir kez yükler.
+     *
+     * **Kimlik:** ekip oturumu.
+     *
+     * **Yetki:** `scan.adjust` — Manuel bakiye düzeltme.
+     *
+     * `POST /v1/shops/{id}/redemptions/{redemptionId}/refund`
+     *
+     * Arguments:
+     * - `body.reason`: Neden (kayda geçer, defter kaydının notu olur)
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-refundShopRedemption API referansı
+     *
+     * @param array{
+     *     params: array{id: string, redemptionId: string},
+     *     body: array{amountMinor: int, reason: string},
+     *     idempotencyKey?: string|null,
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     id: string,
+     *     orderId: string,
+     *     codeLast4: string,
+     *     cardId: string|null,
+     *     cardLast4: string,
+     *     kind: 'balance'|'percent'|'amount'|'link',
+     *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *     programId: string,
+     *     programName: string,
+     *     amountMinor: int,
+     *     percent: int|null,
+     *     currency: string,
+     *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+     *     generation: int,
+     *     heldUntil: string|null,
+     *     capturedMinor: int,
+     *     refundedMinor: int,
+     *     late: bool,
+     *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+     *     createdAt: string,
+     *     capturedAt: string|null,
+     *     releasedAt: string|null,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function refundShopRedemption(array $args): array
+    {
+        /**
+         * @var array{
+         *     id: string,
+         *     orderId: string,
+         *     codeLast4: string,
+         *     cardId: string|null,
+         *     cardLast4: string,
+         *     kind: 'balance'|'percent'|'amount'|'link',
+         *     type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *     programId: string,
+         *     programName: string,
+         *     amountMinor: int,
+         *     percent: int|null,
+         *     currency: string,
+         *     state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+         *     generation: int,
+         *     heldUntil: string|null,
+         *     capturedMinor: int,
+         *     refundedMinor: int,
+         *     late: bool,
+         *     releaseReason: 'cancelled'|'failed'|'expired'|'merchant'|'shop'|null,
+         *     createdAt: string,
+         *     capturedAt: string|null,
+         *     releasedAt: string|null,
+         * } $data
+         */
+        $data = $this->call('refundShopRedemption', $args);
+        return $data;
+    }
+
+    /**
+     * Ödeme adımı ayarları
+     *
+     * Mağazanın kart kodu ayarlarını değiştirir; yalnız gönderilenler değişir. Bağlantının programında `shops.manage` ister — eklentinin kendi anahtarı da kendi bağlantısının ayarlarını değiştirebilir (WordPress'teki Ayarlar). Her değişiklik eskisi ve yenisiyle kayda geçer.
+     * - `tax`: kart değerinin siparişe nasıl uygulanacağı (eklenti uygular). `refundReverses`: iade edilen siparişin kazancı. `holdDays`: 1–30.
+     * - `accepts.programIds`: işletmenin bu mağazada kodu kabul edilen diğer programları (bütün liste; boş liste hepsini kapatır). Yalnız etkin hediye kartı, cashback, kupon ve indirim kartı programları. Eklentinin anahtarı yalnız tavanının içinde açabilir, tavanı genişletemez (`403 OUT_OF_SCOPE`); bir kişi programda `shops.manage` taşıyorsa açabilir ve eklentiyle kurulmuş bir bağlantıda önce tavana ekler (`PUT /v1/shops/{id}/ceiling`). Kapatılan programın kodları hemen reddedilir; önceden ayrılmış tutarlar siparişleri bitene dek geçerlidir.
+     *
+     * **Kimlik:** API anahtarı, ekip oturumu.
+     *
+     * **Yetki:** `shops.manage` — Mağaza bağlantısı yönetimi.
+     *
+     * `PATCH /v1/shops/{id}/settings`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-setShopSettings API referansı
+     *
+     * @param array{
+     *     params: array{id: string},
+     *     body?: array{
+     *         tax?: array{
+     *             giftcard?: 'payment'|'discount',
+     *             cashback?: 'payment'|'discount',
+     *             voucher?: 'payment'|'discount',
+     *         },
+     *         refundReverses?: 'code_orders'|'all'|'never',
+     *         holdDays?: int,
+     *         accepts?: array{programIds: list<string>},
+     *     },
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     id: string,
+     *     platform: 'shopify'|'woocommerce',
+     *     programId: string,
+     *     programName: string,
+     *     programType: string,
+     *     currency: string,
+     *     rule: 'order'|'amount',
+     *     perAmountMinor: int,
+     *     step: int,
+     *     enabled: bool,
+     *     lastOrderAt: string|null,
+     *     createdAt: string,
+     *     webhookUrl: string,
+     *     orders: array{
+     *         credited: int,
+     *         unmatched: int,
+     *         below: int,
+     *         paused: int,
+     *         currency: int,
+     *     },
+     *     lastDelivery: array{
+     *         at: string,
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
+     *     }|null,
+     *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+     *     pluginKey: array{
+     *         id: string,
+     *         prefix: string,
+     *         name: string,
+     *         abilities: list<'view'|'till'>,
+     *         tillLocationId: string|null,
+     *         tillLocationName: string|null,
+     *         tillArchived: bool,
+     *     }|null,
+     *     shopName: string|null,
+     *     settings: array{
+     *         tax: array{
+     *             giftcard: 'payment'|'discount',
+     *             cashback: 'payment'|'discount',
+     *             voucher: 'payment'|'discount',
+     *         },
+     *         refundReverses: 'code_orders'|'all'|'never',
+     *         holdDays: int,
+     *     },
+     *     accepts: array{
+     *         programIds: list<string>,
+     *         ceiling: list<array{
+     *             id: string,
+     *             name: string,
+     *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *         }>|null,
+     *     },
+     *     unbacked: array{count: int, lastAt: string|null},
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function setShopSettings(array $args): array
+    {
+        /**
+         * @var array{
+         *     id: string,
+         *     platform: 'shopify'|'woocommerce',
+         *     programId: string,
+         *     programName: string,
+         *     programType: string,
+         *     currency: string,
+         *     rule: 'order'|'amount',
+         *     perAmountMinor: int,
+         *     step: int,
+         *     enabled: bool,
+         *     lastOrderAt: string|null,
+         *     createdAt: string,
+         *     webhookUrl: string,
+         *     orders: array{
+         *         credited: int,
+         *         unmatched: int,
+         *         below: int,
+         *         paused: int,
+         *         currency: int,
+         *     },
+         *     lastDelivery: array{
+         *         at: string,
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
+         *     }|null,
+         *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+         *     pluginKey: array{
+         *         id: string,
+         *         prefix: string,
+         *         name: string,
+         *         abilities: list<'view'|'till'>,
+         *         tillLocationId: string|null,
+         *         tillLocationName: string|null,
+         *         tillArchived: bool,
+         *     }|null,
+         *     shopName: string|null,
+         *     settings: array{
+         *         tax: array{
+         *             giftcard: 'payment'|'discount',
+         *             cashback: 'payment'|'discount',
+         *             voucher: 'payment'|'discount',
+         *         },
+         *         refundReverses: 'code_orders'|'all'|'never',
+         *         holdDays: int,
+         *     },
+         *     accepts: array{
+         *         programIds: list<string>,
+         *         ceiling: list<array{
+         *             id: string,
+         *             name: string,
+         *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *         }>|null,
+         *     },
+         *     unbacked: array{count: int, lastAt: string|null},
+         * } $data
+         */
+        $data = $this->call('setShopSettings', $args);
+        return $data;
+    }
+
+    /**
+     * Eklentinin anahtarının kabul edebileceği programlar (tavan)
+     *
+     * Eklentiyle kurulmuş bir bağlantının anahtarına işletmenin diğer programlarının kodlarını kullanma yetkisi verir: "E-ticaret · harcama" rolü (yalnız `shops.redeem`, kart vermez), tam olarak bu programlarla sınırlı. Boş liste yetkiyi kaldırır; bağlantının açık programları yeni tavana indirilir. Bağlantı kurulurken tavan, kodu oluşturan kişinin verebileceği bütün programlardır; hiçbiri açık değildir.
+     * - Yalnız ekip oturumu; her programda `shops.manage`, ayrıca `apikeys.manage` ve — bir yetki verildiği için — `team.manage` ile tüm şubelerde `shops.redeem` (alt küme kuralı). Değişiklik ekip kaydına `grant.given` / `grant.revoked` olarak geçer.
+     *
+     * **Kimlik:** ekip oturumu.
+     *
+     * **Yetki:** `shops.manage` — Mağaza bağlantısı yönetimi.
+     *
+     * `PUT /v1/shops/{id}/ceiling`
+     *
+     * Arguments:
+     * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-setShopCeiling API referansı
+     *
+     * @param array{
+     *     params: array{id: string},
+     *     body: array{programIds: list<string>},
+     *     merchant?: string|null,
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     id: string,
+     *     platform: 'shopify'|'woocommerce',
+     *     programId: string,
+     *     programName: string,
+     *     programType: string,
+     *     currency: string,
+     *     rule: 'order'|'amount',
+     *     perAmountMinor: int,
+     *     step: int,
+     *     enabled: bool,
+     *     lastOrderAt: string|null,
+     *     createdAt: string,
+     *     webhookUrl: string,
+     *     orders: array{
+     *         credited: int,
+     *         unmatched: int,
+     *         below: int,
+     *         paused: int,
+     *         currency: int,
+     *     },
+     *     lastDelivery: array{
+     *         at: string,
+     *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
+     *     }|null,
+     *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+     *     pluginKey: array{
+     *         id: string,
+     *         prefix: string,
+     *         name: string,
+     *         abilities: list<'view'|'till'>,
+     *         tillLocationId: string|null,
+     *         tillLocationName: string|null,
+     *         tillArchived: bool,
+     *     }|null,
+     *     shopName: string|null,
+     *     settings: array{
+     *         tax: array{
+     *             giftcard: 'payment'|'discount',
+     *             cashback: 'payment'|'discount',
+     *             voucher: 'payment'|'discount',
+     *         },
+     *         refundReverses: 'code_orders'|'all'|'never',
+     *         holdDays: int,
+     *     },
+     *     accepts: array{
+     *         programIds: list<string>,
+     *         ceiling: list<array{
+     *             id: string,
+     *             name: string,
+     *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+     *         }>|null,
+     *     },
+     *     unbacked: array{count: int, lastAt: string|null},
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function setShopCeiling(array $args): array
+    {
+        /**
+         * @var array{
+         *     id: string,
+         *     platform: 'shopify'|'woocommerce',
+         *     programId: string,
+         *     programName: string,
+         *     programType: string,
+         *     currency: string,
+         *     rule: 'order'|'amount',
+         *     perAmountMinor: int,
+         *     step: int,
+         *     enabled: bool,
+         *     lastOrderAt: string|null,
+         *     createdAt: string,
+         *     webhookUrl: string,
+         *     orders: array{
+         *         credited: int,
+         *         unmatched: int,
+         *         below: int,
+         *         paused: int,
+         *         currency: int,
+         *     },
+         *     lastDelivery: array{
+         *         at: string,
+         *         result: 'credited'|'unmatched'|'below'|'paused'|'currency'|'duplicate'|'ignored'|'no_id'|'bad_body'|'cancelled'|'refunded',
+         *     }|null,
+         *     lastRefusal: array{at: string, reason: 'bad_signature'}|null,
+         *     pluginKey: array{
+         *         id: string,
+         *         prefix: string,
+         *         name: string,
+         *         abilities: list<'view'|'till'>,
+         *         tillLocationId: string|null,
+         *         tillLocationName: string|null,
+         *         tillArchived: bool,
+         *     }|null,
+         *     shopName: string|null,
+         *     settings: array{
+         *         tax: array{
+         *             giftcard: 'payment'|'discount',
+         *             cashback: 'payment'|'discount',
+         *             voucher: 'payment'|'discount',
+         *         },
+         *         refundReverses: 'code_orders'|'all'|'never',
+         *         holdDays: int,
+         *     },
+         *     accepts: array{
+         *         programIds: list<string>,
+         *         ceiling: list<array{
+         *             id: string,
+         *             name: string,
+         *             type: 'stamp'|'points'|'discount'|'vip'|'giftcard'|'voucher'|'cashback',
+         *         }>|null,
+         *     },
+         *     unbacked: array{count: int, lastAt: string|null},
+         * } $data
+         */
+        $data = $this->call('setShopCeiling', $args);
+        return $data;
+    }
+
+    // ------------------------------------------------------------ Kart sahibi
+
+    /**
+     * Online alışveriş kodları
+     *
+     * "Online alışverişte kullan" düğmesi için: `online` işletmenin açık bir mağazasının bu kartı kabul edip etmediğidir (değilse düğmeyi göstermeyin). `offer` bir kodun şimdi ne vereceği (bakiyeli kartta `maxMinor` kullanılabilir bakiye), verilemiyorsa `refusal` nedenidir (`INSUFFICIENT_BALANCE`, `PASS_USED_UP`, `VOUCHER_NOT_ONLINE`, `PASS_INACTIVE`, `NOT_ONLINE` …).
+     * `holds`: karttan şu an bir online siparişe ayrılmış tutarlar ve en geç ne zaman döneceği ("₺40,00 bir online siparişe ayrıldı…" satırı). `codes`: son 7 günün kodları, kodun kendisi olmadan.
+     *
+     * **Kimlik:** kart sahibi oturumu.
+     *
+     * `GET /v1/holder/cards/{serial}/checkout-codes`
+     *
+     * Arguments:
+     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-holderCheckoutCodes API referansı
+     *
+     * @param array{
+     *     params: array{serial: string},
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     online: bool,
+     *     offer: array{
+     *         kind: 'balance'|'percent'|'amount'|'link',
+     *         currency: string,
+     *         maxMinor: int|null,
+     *         percent: int|null,
+     *         amountMinor: int|null,
+     *         usesLeft: int|null,
+     *     }|null,
+     *     refusal: string|null,
+     *     holds: list<array{amountMinor: int, heldUntil: string, shop: string}>,
+     *     codes: list<array{
+     *         id: string,
+     *         last4: string,
+     *         capMinor: int|null,
+     *         state: 'open'|'attached'|'expired'|'cancelled',
+     *         firstUseBy: string,
+     *         attachBy: string,
+     *         createdAt: string,
+     *         order: array{
+     *             shop: string,
+     *             amountMinor: int,
+     *             state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+     *             heldUntil: string|null,
+     *             kind: 'balance'|'percent'|'amount'|'link',
+     *             releaseReason: 'cancelled'|'failed'|'shop'|'merchant'|'expired'|null,
+     *         }|null,
+     *     }>,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function holderCheckoutCodes(array $args): array
+    {
+        /**
+         * @var array{
+         *     online: bool,
+         *     offer: array{
+         *         kind: 'balance'|'percent'|'amount'|'link',
+         *         currency: string,
+         *         maxMinor: int|null,
+         *         percent: int|null,
+         *         amountMinor: int|null,
+         *         usesLeft: int|null,
+         *     }|null,
+         *     refusal: string|null,
+         *     holds: list<array{amountMinor: int, heldUntil: string, shop: string}>,
+         *     codes: list<array{
+         *         id: string,
+         *         last4: string,
+         *         capMinor: int|null,
+         *         state: 'open'|'attached'|'expired'|'cancelled',
+         *         firstUseBy: string,
+         *         attachBy: string,
+         *         createdAt: string,
+         *         order: array{
+         *             shop: string,
+         *             amountMinor: int,
+         *             state: 'held'|'captured'|'released'|'expired'|'refunded'|'unbacked',
+         *             heldUntil: string|null,
+         *             kind: 'balance'|'percent'|'amount'|'link',
+         *             releaseReason: 'cancelled'|'failed'|'shop'|'merchant'|'expired'|null,
+         *         }|null,
+         *     }>,
+         * } $data
+         */
+        $data = $this->call('holderCheckoutCodes', $args);
+        return $data;
+    }
+
+    /**
+     * Online alışveriş kodu oluştur
+     *
+     * Kart için tek kullanımlık bir ödeme kodu (`RW-XXXX-XXXX`) oluşturur; mağazanın ödeme adımında kupon alanına yazılır. 15 dakika içinde kullanılmaya başlanmalı, 45 dakika içinde bir siparişe bağlanmalıdır; yalnız işletmenin kendi mağazalarında geçer. Kod oluşturmak değer ayırmaz: ayırma sipariş verilince yapılır.
+     * - `amountMinor`: yalnız hediye kartı ve cashback — kodun en fazla düşebileceği tutar; verilmezse kullanılabilir bakiyenin tamamı.
+     * - Kod **yalnız bu yanıtta** gelir. Karta bir kodun oluşturulduğu, kartı tutan hesapların diğer cihazlarına İşlem bildirimiyle söylenir.
+     * - Sınırlar: kart başına 3 açık kod (`TOO_MANY_CODES`), saatte 10 (`RATE_LIMITED`).
+     *
+     * **Kimlik:** kart sahibi oturumu.
+     *
+     * `POST /v1/holder/cards/{serial}/checkout-codes`
+     *
+     * Arguments:
+     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-mintHolderCheckoutCode API referansı
+     *
+     * @param array{
+     *     params: array{serial: string},
+     *     body?: array{amountMinor?: int},
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     * @return array{
+     *     id: string,
+     *     code: string,
+     *     capMinor: int|null,
+     *     currency: string,
+     *     kind: 'balance'|'percent'|'amount'|'link',
+     *     percent: int|null,
+     *     amountMinor: int|null,
+     *     firstUseBy: string,
+     *     attachBy: string,
+     * }
+     *
+     * @throws RewloyException
+     */
+    public function mintHolderCheckoutCode(array $args): array
+    {
+        /**
+         * @var array{
+         *     id: string,
+         *     code: string,
+         *     capMinor: int|null,
+         *     currency: string,
+         *     kind: 'balance'|'percent'|'amount'|'link',
+         *     percent: int|null,
+         *     amountMinor: int|null,
+         *     firstUseBy: string,
+         *     attachBy: string,
+         * } $data
+         */
+        $data = $this->call('mintHolderCheckoutCode', $args);
+        return $data;
+    }
+
+    /**
+     * Kodu iptal et
+     *
+     * Açık bir kodu hemen geçersiz kılar (iptal edilmiş kodu tekrar iptal etmek de 204). Bir siparişe bağlanmış kod iptal edilemez (`409 CODE_ATTACHED`): sipariş iptal edilirse ayrılan tutar karta kendiliğinden döner.
+     *
+     * **Kimlik:** kart sahibi oturumu.
+     *
+     * `DELETE /v1/holder/cards/{serial}/checkout-codes/{id}`
+     *
+     * Arguments:
+     * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
+     *
+     * @see https://rewloy.com/gelistiriciler/api#op-cancelHolderCheckoutCode API referansı
+     *
+     * @param array{
+     *     params: array{serial: string, id: string},
+     *     timeout?: int|float|null,
+     *     maxRetries?: int|null,
+     * } $args
+     *
+     * @throws RewloyException
+     */
+    public function cancelHolderCheckoutCode(array $args): void
+    {
+        $this->call('cancelHolderCheckoutCode', $args);
     }
 
     // ------------------------------------------------------------ Ekip
@@ -12367,15 +14351,20 @@ trait Methods
      * E-posta ekle: kod gönder
      *
      * Adrese 6 haneli bir kod gider (15 dakika). Kodu bu yanıttaki `request` ile `POST /v1/holder/identities/email/verify` gönderin. Doğrulanan adresle başka işletmelerden aldığınız kartlar da hesaba gelir. IP başına 15 dakikada 12, hesap başına saatte 10.
+     * - **Idempotency-Key** (isteğe bağlı, önerilir; 8–64 karakter, her yeni istek için yeni bir UUID): aynı anahtar ve aynı gövdeyle tekrar yeni kod GÖNDERMEZ, ilk yanıtı (aynı `request`) `Idempotent-Replayed: true` ile döndürür ve sınırlardan düşmez — bağlantısı kopan uygulama güvenle yineler. Aynı anahtar başka bir gövdeyle `422 IDEMPOTENCY_KEY_REUSED`; ilk istek sürerken `409 IDEMPOTENCY_IN_PROGRESS` (bir şey gönderilmez). Yanıt şifreli saklanır, 7 gün tekrar edilir; kodun kendisi 15 dakika geçerlidir, yeni kod için yeni anahtar gönderin. Oturumsuz çağrıda anahtar istemcinin IP adresine bağlıdır. Başlık yoksa her çağrı yeni bir kod ve yeni bir `request` demektir.
      *
      * **Kimlik:** kart sahibi oturumu.
      *
      * `POST /v1/holder/identities/email`
      *
+     * Arguments:
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     *
      * @see https://rewloy.com/gelistiriciler/api#op-addHolderEmail API referansı
      *
      * @param array{
      *     body: array{email: string},
+     *     idempotencyKey?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
      * } $args
@@ -12434,6 +14423,7 @@ trait Methods
      * - Yalnız Türkiye cep telefonu numaraları (`+90 5…`); değilse `400 INVALID_PHONE`. Telefonla giriş bu ortamda açık değilse `501 NOT_ENABLED`. `channel` verilmezse şu an açık olan ilk yol (önce WhatsApp); istenen yol açık değilse `501 NOT_ENABLED`, bugünkü bütçesi dolduysa `503 PHONE_BUSY` (`details.channels`: şu an açık olanlar).
      * - Eklenen numarayla bundan sonra girilir ve numarayla katılınan kartlar bu hesaba gelir; daha önce başka biri o numarayla katıldıysa o kartlar gelmez (numaralar el değiştirir).
      * - Bir numaraya saatte 3, günde 6 kod gider, WhatsApp ve SMS birlikte (fazlası sessizce gönderilmez). IP başına saatte 10, hesap başına saatte 10.
+     * - **Idempotency-Key** (isteğe bağlı, önerilir; 8–64 karakter, her yeni istek için yeni bir UUID): aynı anahtar ve aynı gövdeyle tekrar yeni kod GÖNDERMEZ, ilk yanıtı (aynı `request`) `Idempotent-Replayed: true` ile döndürür ve sınırlardan düşmez — bağlantısı kopan uygulama güvenle yineler. Aynı anahtar başka bir gövdeyle `422 IDEMPOTENCY_KEY_REUSED`; ilk istek sürerken `409 IDEMPOTENCY_IN_PROGRESS` (bir şey gönderilmez). Yanıt şifreli saklanır, 7 gün tekrar edilir; kodun kendisi 15 dakika geçerlidir, yeni kod için yeni anahtar gönderin. Oturumsuz çağrıda anahtar istemcinin IP adresine bağlıdır. Başlık yoksa her çağrı yeni bir kod ve yeni bir `request` demektir.
      *
      * **Kimlik:** kart sahibi oturumu.
      *
@@ -12442,11 +14432,13 @@ trait Methods
      * Arguments:
      * - `body.phone`: Bir Türkiye cep telefonu numarası: `+905321234567`, `05321234567`, `532 123 45 67` (boşluklar yok sayılır). Telefonla giriş açık değilse `501 NOT_ENABLED`.
      * - `body.channel`: Kodun gideceği yol: `whatsapp` ya da `sms` (yalnız `phone` ile). Verilmezse şu an açık olan ilk yol (önce WhatsApp). Açık değilse `501 NOT_ENABLED`, bugünkü bütçesi dolduysa `503 PHONE_BUSY`; ikisinde de `details.channels` şu an açık olanları söyler.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-addHolderPhone API referansı
      *
      * @param array{
      *     body: array{phone: string, channel?: 'whatsapp'|'sms'},
+     *     idempotencyKey?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
      * } $args
@@ -12592,6 +14584,7 @@ trait Methods
      * Hesabın bir e-postasının ya da numarasının (`GET /v1/holder/account` listesindeki kimliği) yerine yenisi (ADR 170): adrese `email`, numaraya `phone` (aynı türden). Yeniye 6 haneli bir kod gider; kodu bu yanıttaki `request` ile `POST /v1/holder/identities/{id}/replace/verify` gönderin.
      * - Uygulamanın oturumu cihazın kanıtıdır (web'deki cihaz anahtarının yerine).
      * - Yeni adres ya da numara eskisiyle aynıysa ya da zaten bu hesabınsa `409 IDENT_SAME`. Numara için telefonla giriş açık değilse `501 NOT_ENABLED`; `channel` ve sınırlar `POST /v1/holder/identities/phone` gibidir. Hesap başına saatte 10 (ekleme ve değiştirme birlikte).
+     * - **Idempotency-Key** (isteğe bağlı, önerilir; 8–64 karakter, her yeni istek için yeni bir UUID): aynı anahtar ve aynı gövdeyle tekrar yeni kod GÖNDERMEZ, ilk yanıtı (aynı `request`) `Idempotent-Replayed: true` ile döndürür ve sınırlardan düşmez — bağlantısı kopan uygulama güvenle yineler. Aynı anahtar başka bir gövdeyle `422 IDEMPOTENCY_KEY_REUSED`; ilk istek sürerken `409 IDEMPOTENCY_IN_PROGRESS` (bir şey gönderilmez). Yanıt şifreli saklanır, 7 gün tekrar edilir; kodun kendisi 15 dakika geçerlidir, yeni kod için yeni anahtar gönderin. Oturumsuz çağrıda anahtar istemcinin IP adresine bağlıdır. Başlık yoksa her çağrı yeni bir kod ve yeni bir `request` demektir.
      *
      * **Kimlik:** kart sahibi oturumu.
      *
@@ -12601,12 +14594,14 @@ trait Methods
      * - `body.email`: Yeni e-posta (bir e-postanın yerine)
      * - `body.phone`: Yeni numara (bir numaranın yerine)
      * - `body.channel`: Kodun gideceği yol: `whatsapp` ya da `sms` (yalnız `phone` ile). Verilmezse şu an açık olan ilk yol (önce WhatsApp). Açık değilse `501 NOT_ENABLED`, bugünkü bütçesi dolduysa `503 PHONE_BUSY`; ikisinde de `details.channels` şu an açık olanları söyler.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-replaceHolderIdentity API referansı
      *
      * @param array{
      *     params: array{id: string},
      *     body?: array{email?: string, phone?: string, channel?: 'whatsapp'|'sms'},
+     *     idempotencyKey?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
      * } $args
@@ -13266,7 +15261,7 @@ trait Methods
      * @return array{
      *     data: list<array{
      *         id: string,
-     *         kind: 'campaign'|'automation'|'reward_ready'|'test'|'security',
+     *         kind: 'campaign'|'automation'|'reward_ready'|'test'|'security'|'checkout_code',
      *         title: string,
      *         body: string,
      *         business: array{name: string, slug: string}|null,
@@ -13287,7 +15282,7 @@ trait Methods
          * @var array{
          *     data: list<array{
          *         id: string,
-         *         kind: 'campaign'|'automation'|'reward_ready'|'test'|'security',
+         *         kind: 'campaign'|'automation'|'reward_ready'|'test'|'security'|'checkout_code',
          *         title: string,
          *         body: string,
          *         business: array{name: string, slug: string}|null,
@@ -13542,6 +15537,7 @@ trait Methods
      * - İsteğe bağlı olarak yalnız hesabın sahibinin bilebileceği bilgiler talebi güçlendirir: kart numaraları (`cards`, en çok 5), kartların olduğu işletmeler (`businesses`, en çok 5), kartın son kullanıldığı zaman (`lastVisit`).
      * - `previousToken`: bu kurulumun daha önceki `rwh_` oturumu (süresi dolmuş olsa da): kurulumun hesaba yeni olmadığını söyler.
      * - Yanıt eski adresin ya da numaranın kayıtlı olup olmadığını **söylemez**. Sınırlar: IP başına saatte 5 talep, aynı eski adres ya da numara için günde 5; kod sınırları `POST /v1/holder/login` gibidir. Telefonla giriş açık değilse numara `501 NOT_ENABLED`.
+     * - **Idempotency-Key** (isteğe bağlı, önerilir; 8–64 karakter, her yeni istek için yeni bir UUID): aynı anahtar ve aynı gövdeyle tekrar yeni kod GÖNDERMEZ, ilk yanıtı (aynı `request`) `Idempotent-Replayed: true` ile döndürür ve sınırlardan düşmez — bağlantısı kopan uygulama güvenle yineler. Aynı anahtar başka bir gövdeyle `422 IDEMPOTENCY_KEY_REUSED`; ilk istek sürerken `409 IDEMPOTENCY_IN_PROGRESS` (bir şey gönderilmez). Yanıt şifreli saklanır, 7 gün tekrar edilir; kodun kendisi 15 dakika geçerlidir, yeni kod için yeni anahtar gönderin. Oturumsuz çağrıda anahtar istemcinin IP adresine bağlıdır. Başlık yoksa her çağrı yeni bir kod ve yeni bir `request` demektir.
      *
      * **Kimlik:** kimlik gerekmez.
      *
@@ -13556,6 +15552,7 @@ trait Methods
      * - `body.businesses`: Kartlarının olduğu işletmeler
      * - `body.lastVisit`: 1m: son bir ay · 3m: 1–3 ay · 6m: 3–6 ay · old: 6 aydan önce · unknown: hatırlamıyor
      * - `body.previousToken`: Bu kurulumun önceki `rwh_` oturumu, varsa
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-startHolderRecovery API referansı
      *
@@ -13570,6 +15567,7 @@ trait Methods
      *         lastVisit?: '1m'|'3m'|'6m'|'old'|'unknown',
      *         previousToken?: string,
      *     },
+     *     idempotencyKey?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
      * } $args
