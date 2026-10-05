@@ -232,7 +232,7 @@ echo $iptal['undone'], ' ', $iptal['restored'], ' geri verildi, bakiye ', $iptal
 `passAction`ın yanıtı kart türüne göre iki biçimdedir (PHPDoc'ta iki dizi
 şeklinin birleşimi): bakiyeli kartlarda `balance` (damga, puan, VIP, cashback,
 hediye kartı), kupon ve indirim kartında `status`, `uses` ve `usesLeft`
-(`isset($sonuc['uses'])` ile ayırın; PHPStan ve Psalm bunu daraltır).
+(`isset($sonuc['uses'])` ile ayırın; PHPStan bunu daraltır).
 Kazanımlar (`earn-stamps`, `earn-points`, `visit`) `reverseAction`la değil
 `reverseSale`la geri alınır.
 
