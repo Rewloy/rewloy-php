@@ -13,7 +13,8 @@ kartı, kupon ve indirimdir:
 
 Kasada QR okutulur; bakiye, ödül ve kampanyalar kartın kendisinde güncellenir.
 Panelde yapılabilen her şey [Rewloy API v1](https://rewloy.com/gelistiriciler)
-ile de yapılabilir; bu kütüphane onu PHP'den kullanır:
+ile de yapılabilir; bu kütüphane onu PHP'den kullanır. Geliştirici belgeleri:
+**https://rewloy.com/gelistiriciler**.
 
 - **Tipli.** API'nin her işlemi, `operationId` adıyla bir metottur.
   Argümanlar ve yanıtlar, OpenAPI belgesinden
@@ -22,8 +23,8 @@ ile de yapılabilir; bu kütüphane onu PHP'den kullanır:
   anahtarları tanır. CI belgeyi her gün okur ve değişince yeniden üretir.
 - **Bağımlılıksız.** PHP 8.2 ve üstü; `curl`, `json` ve `hash` eklentileri
   yeter.
-- **Güvenli tekrar.** Geçici hatalarda ölçülü yeniden deneme; kasa işleminde
-  ve kampanyada `Idempotency-Key`.
+- **Güvenli tekrar.** Geçici hatalarda ölçülü yeniden deneme; satışta, kasa
+  işleminde ve kampanyada `Idempotency-Key`.
 - **Ötesi:** sayfalama, canlı akış (SSE), webhook imzası doğrulama,
   kullanımdan kalkma uyarıları.
 
@@ -53,7 +54,7 @@ işlemin gerektirdikleriyle:
 - `query`: sorgu parametreleri;
 - `body`: JSON gövde;
 - `merchant`: `Rewloy-Merchant` başlığı;
-- `idempotencyKey`: `Idempotency-Key` başlığı (kasa işlemi ve kampanya);
+- `idempotencyKey`: `Idempotency-Key` başlığı (satış, kasa işlemi ve kampanya);
 - `timeout` (saniye) ve `maxRetries`.
 
 Metot yanıttaki `data`yı dizi olarak döndürür. Sayfalı listelerde
@@ -93,11 +94,26 @@ Bir işlem istemcinin kimlik türünü kabul etmiyor ama kimliksiz de çalışı
 bir kimliği reddeder (`CREDENTIAL_NOT_ALLOWED`).
 
 Diğer seçenekler:
-- `baseUrl` (varsayılan `https://app.rewloy.com`);
+- `baseUrl` (varsayılan `https://app.rewloy.com`; `/v1` olmadan, kütüphane ekler);
 - `timeout`: bir denemeye verilen süre, saniye (60);
 - `maxRetries` (2);
 - `transport`: kendi HTTP katmanınız ([aşağıda](#http-katmanı));
 - `userAgent`: gönderilen `User-Agent`a eklenir, örneğin `'KasaPOS/4.2'`.
+
+### Başka bir adres (staging)
+
+API'nin başka bir kopyasına (kendi staging ortamınız ya da bir vekil sunucu)
+`baseUrl` ile bağlanılır:
+
+```php
+$rewloy = new Client(
+    apiKey: (string) getenv('REWLOY_API_KEY'),
+    baseUrl: 'https://rewloy-staging.ornek.com',   // /v1 olmadan
+);
+```
+
+Gerçek müşterilere dokunmadan denemek için adres değiştirmeniz gerekmez:
+[test modu](#test-modu) aynı adreste, ayrı bir test ortamıyla çalışır.
 
 ## Kart vermek ve kasada işlem
 
@@ -109,18 +125,92 @@ $kart = $rewloy->issuePass([
 $sonuc = $rewloy->passAction([
     'params' => ['serial' => $kart['serial']],
     'body' => ['action' => 'earn-stamps', 'locationId' => $subeId, 'count' => 1],
-    'idempotencyKey' => 'fis-' . $fisNo,
+    'idempotencyKey' => 'kasa3-z0187-fis' . $fisNo,   // aşağıya bakın
 ]);
 if ($sonuc['duplicate']) {
-    echo "Bu fiş zaten işlenmiş\n";
+    echo "Bu işlem zaten yazılmış\n";
 }
 ```
 
-`passAction` ve `sendCampaign` bir `Idempotency-Key` ister. Verilmezse
-kütüphane bir UUID üretir ve aynı çağrının her denemesinde aynısını gönderir.
-Kasada fiş numarası gibi kendi anahtarınızı vermek daha iyidir: uygulama
-çöküp yeniden başlasa bile aynı fiş ikinci kez işlenmez, aynı anahtarla tekrar
-ilk sonucu `duplicate: true` ile döndürür.
+### Satış: `recordSale`
+
+Kasa ya da kendi yazılımınız için en kolay yol `recordSale`dir: "bu satış
+oldu, sen yaz". Ödenen toplamı (kartın para biriminde, kuruş) gönderirsiniz;
+ne yazılacağına kartın türü ve programın kendi kuralı karar verir. Kartın
+türünü bilmeniz gerekmez.
+
+```php
+$kart = $rewloy->getPass(['params' => ['serial' => $seri]]);
+// Kartın türüne özgü alanlar; `balance` yerine bunları okuyun.
+if (isset($kart['stamps'])) {
+    echo $kart['stamps']['count'], ' / ', $kart['stamps']['max'], " damga\n";
+}
+if (isset($kart['points'])) {
+    echo $kart['points'], " puan\n";
+}
+if (isset($kart['money'])) {
+    echo $kart['money']['amountMinor'] / 100, ' ', $kart['money']['currency'], "\n";
+}
+echo $kart['programName'], ' ', $kart['customer']['name'] ?? '', "\n";   // customer: yalnız customers.read yetkisiyle
+
+// Fiş numarası anahtar olamaz: kasa + Z no + fiş no, ya da satışla saklanan bir UUID.
+$anahtar = 'kasa3-z0187-fis' . $fisNo;
+$satis = $rewloy->recordSale([
+    'params' => ['serial' => $seri],
+    'body' => [
+        'locationId' => $subeId,
+        'amountMinor' => 4550,            // 45,50: kartın para biriminde ($kart['currency']), kuruş
+        'currency' => $kart['currency'],  // isteğe bağlı güvence: uyuşmazsa 422 CURRENCY_MISMATCH
+        'reference' => 'fis-' . $fisNo,   // fiş numarası buraya yazılır
+    ],
+    'idempotencyKey' => $anahtar,
+]);
+if ($satis['applied'] === 'none') {
+    echo 'Yazılan bir şey yok: ', $satis['reason'] ?? '', "\n";
+} else {
+    echo $satis['credited'], ' ', $satis['applied'], ' yazıldı, bakiye ', $satis['balance'], "\n";
+}
+if ($satis['rewardReady']) {
+    echo "Ödül hazır\n";
+}
+```
+
+`GET /v1/passes/{serial}` ayrıca `actions` (kartın aldığı kasa işlemleri ve
+şimdi yapılıp yapılamayacakları) ve `sale` (bir satışın bu kartta ne
+yazacağı) alanlarını verir.
+
+**İade.** `reverseSale` bir satışın karta yazdığını geri alır; satışı
+yazarken gönderdiğiniz anahtarla (`saleKey`) ya da `reference`la bulur:
+
+```php
+$geri = $rewloy->reverseSale([
+    'params' => ['serial' => $seri],
+    'body' => ['saleKey' => $anahtar, 'locationId' => $subeId],
+]);
+echo $geri['reversed'], ' ', $geri['applied'], ' geri alındı, bakiye ', $geri['balance'], "\n";
+```
+
+Bir satış bir kez geri alınır (tekrar `duplicate: true` döner). Kazanılan
+kullanılmışsa (ödüle ya da harcamaya gitmişse) `409 SALE_ALREADY_SPENT` gelir ve
+hiçbir şey yazılmaz.
+
+### `Idempotency-Key`
+
+`recordSale`, `passAction` ve `sendCampaign` bir `Idempotency-Key` ister.
+Verilmezse kütüphane bir UUID üretir ve aynı çağrının her denemesinde aynısını
+gönderir; ama uygulama çöküp yeniden başlarsa yeni bir anahtar üretilir ve
+satış ikinci kez yazılabilir. Kasada anahtarı kendiniz üretip satışla birlikte
+saklayın:
+- **Anahtar bir kimlik için kalıcı olarak tekildir** (8–64 karakter; defterden
+  hiç silinmez). Aynı anahtarla aynı isteğin tekrarı ikinci kez yazmaz ve
+  ilk sonucu `duplicate: true` ile döndürür. Aynı anahtar başka bir gövdeyle
+  `422 IDEMPOTENCY_KEY_REUSED` alır.
+- **Fiş numarası tek başına anahtar olamaz:** yazarkasa fiş numaraları Z
+  raporundan sonra yeniden başlar. Kasa + Z no + fiş no birleşimi
+  (`kasa3-z0187-fis0042`) ya da satışla birlikte saklanıp tekrarda yeniden
+  gönderilen bir UUID kullanın.
+- **Fiş numarası `reference` alanına** yazılır; müşterinin geçmişinde ve işlem
+  dökümünde görünür.
 
 ## Sayfalama
 
@@ -181,6 +271,23 @@ bir kez gösterilen sırla (`whsec_…`) doğrular:
 - karşılaştırmayı sabit sürede yapar (`hash_equals`);
 - `t` şimdiden 300 saniyeden (`$tolerance`) uzaksa reddeder;
 - gövdeyi çözülmüş bir dizi olarak döndürür.
+
+Webhook'u panelden ya da API'den ekleyebilirsiniz. `webhooks.manage` yetkili
+bir API anahtarı `createWebhook`, `listWebhooks`, `getWebhook`,
+`setWebhookStatus`, `testWebhook` ve `listWebhookDeliveries`yi çağırabilir;
+`webhookEvents` abone olunabilecek olayları söyler. Sır (`secret`) yalnız
+`createWebhook` yanıtında gelir, saklayın:
+
+```php
+$yeni = $rewloy->createWebhook([
+    'body' => ['url' => 'https://ornek.com/rewloy/webhook', 'events' => ['pass.activity', 'pass.voided']],
+]);
+$sir = $yeni['secret'];
+$rewloy->testWebhook(['params' => ['id' => $yeni['webhook']['id']]]);   // webhook.test olayı gönderir
+```
+
+Adres herkese açık bir `https` adresi olmalıdır (test ortamında da);
+yerelde bir tünel kullanın.
 
 Tutmazsa `WebhookSignatureException` atar: 400 ile yanıtlayın ve hiçbir işlem
 yapmayın. Gövde mutlaka ham olmalıdır. JSON olarak çözülüp yeniden yazılan bir
@@ -298,7 +405,7 @@ try {
     $rewloy->passAction([
         'params' => ['serial' => $seri],
         'body' => ['action' => 'spend', 'locationId' => $subeId, 'amountMinor' => 5000],
-        'idempotencyKey' => 'fis-' . $fisNo,
+        'idempotencyKey' => 'kasa3-z0187-fis' . $fisNo,
     ]);
 } catch (RateLimitException $e) {
     echo $e->retryAfter, " saniye sonra yeniden deneyin\n";
@@ -380,9 +487,31 @@ $yanit->data;        // kampanya
 (`Rewloy\Response`) döndürür: `data`, sayfalı listede `meta`, `status`,
 `headers`, `requestId`, `mode` ve `replayed`.
 
-`mode`, yanıtın `Rewloy-Mode` başlığıdır. Platformda test modu hazırlanıyor:
-gerçek mesaj göndermeyen, gerçek kart vermeyen test anahtarları. Geldiğinde
-test yanıtları bunu bu başlıkla söyleyecek. Başlık yoksa `null`.
+`mode`, yanıtın `Rewloy-Mode` başlığıdır: `live` ya da `test`. Başlık yoksa
+`null`.
+
+## Test modu
+
+Gerçek müşterilere dokunmadan denemek için işletmenizin bir **test ortamı**
+vardır: ona bağlı ayrı bir işletme (adı "· Test" ile biter); kendi
+programları, müşterileri, kartları, anahtarları ve webhook'ları. Panel →
+Geliştirici → "Test ortamını aç" ya da `POST /v1/test/environment`. Orada
+oluşturulan anahtar `rwk_test_` ile başlar ve aynı adreste, aynı yollarla
+çalışır:
+
+```php
+$rewloy = new Client(apiKey: (string) getenv('REWLOY_TEST_KEY'));   // rwk_test_…
+$yanit = $rewloy->request('getPass', ['params' => ['serial' => $seri]]);
+$yanit->mode;   // 'test'
+```
+
+- Test ortamı hiçbir şey göndermez (e-posta, bildirim, SMS); kartlar
+  cüzdanlara eklenmez. Gönderilmeyenler `GET /v1/test/messages` ile okunur.
+- Webhook'lar teslim edilir ve `Rewloy-Test: 1` başlığıyla `"test": true`
+  taşır.
+- Gerçek müşteri verisini test ortamına girmeyin.
+
+Ayrıntı: https://rewloy.com/gelistiriciler#test-ortamı
 
 ## HTTP katmanı
 
@@ -450,6 +579,8 @@ Bir güvenlik açığı bulursanız [SECURITY.md](SECURITY.md) dosyasındaki yol
 
 ## English
 
+Developer docs (in Turkish): **https://rewloy.com/gelistiriciler**.
+
 **The official PHP library for the Rewloy API.**
 
 > **Status: preview (0.x), published on Packagist. The API is stable; the
@@ -481,13 +612,30 @@ use Rewloy\Client;
 $rewloy = new Client(apiKey: (string) getenv('REWLOY_API_KEY'));   // or staffSession: + merchant:, or holderSession:
 
 $card = $rewloy->issuePass(['body' => ['programId' => $programId, 'email' => $email, 'kvkkConsent' => true]]);
-$result = $rewloy->passAction([
+$sale = $rewloy->recordSale([
     'params' => ['serial' => $card['serial']],
-    'body' => ['action' => 'earn-stamps', 'locationId' => $locationId],
-    'idempotencyKey' => 'receipt-' . $receiptNo,   // generated when omitted, reused across retries
+    'body' => ['locationId' => $locationId, 'amountMinor' => 4550, 'reference' => 'receipt-' . $receiptNo],  // amount in the card's currency, minor units
+    'idempotencyKey' => 'till3-z0187-r' . $receiptNo,
 ]);
 ```
 
+- **Till.** `recordSale` writes a completed sale to a card (the card type and
+  the programme's own rule decide what is written); `getPass` returns the
+  card's structured fields (`programName`, `currency`, `stamps`, `points`,
+  `money`, `customer`); `reverseSale` takes a refunded sale back:
+  `$rewloy->reverseSale(['params' => ['serial' => $serial], 'body' => ['saleKey' => $key]])`.
+- **Idempotency keys.** `recordSale`, `passAction` and `sendCampaign` need an
+  `Idempotency-Key`. A key is unique **for good per credential**: do not use the
+  receipt number alone (fiscal receipt numbers restart after the Z report) but
+  register + Z number + receipt number, or a UUID stored with the sale. The
+  receipt number goes in `reference`. A generated key only covers the retries
+  of one call, not a restart of your app.
+- **Base URL.** `new Client(apiKey: …, baseUrl: 'https://staging.example.com')`
+  (the origin, without `/v1`). Default `https://app.rewloy.com`.
+- **Test mode.** Open the test environment (panel → Developer, or
+  `POST /v1/test/environment`) and use its `rwk_test_` key at the same address:
+  a separate test business that sends nothing and never reaches real
+  customers. Webhooks are delivered with `Rewloy-Test: 1`.
 - **Arguments.** Each method takes one array: `params`, `query` and `body` as
   the operation needs, plus `merchant`, `idempotencyKey`, `timeout` (seconds)
   and `maxRetries`. A key the operation does not take throws
@@ -497,7 +645,7 @@ $result = $rewloy->passAction([
   bytes for files.
 - **The whole answer.** `$rewloy->request($id, $args)` returns a
   `Rewloy\Response` with `status`, `headers`, `requestId`, `mode` (the
-  `Rewloy-Mode` header, for the coming test mode) and `replayed`
+  `Rewloy-Mode` header: `live` or `test`) and `replayed`
   (`Idempotent-Replayed`).
 - **Pagination.** `$rewloy->paginate('listCustomers', $args)` is a generator
   over the items of every page.
