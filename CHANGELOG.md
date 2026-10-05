@@ -5,6 +5,33 @@ https://rewloy.com/gelistiriciler/degisiklikler
 
 This library's releases. The API's own changes are listed at the link above.
 
+## 0.2.1 (2026-10-05)
+
+Dışarıdan geliştiricilerin bulduğu üç sorun düzeltildi.
+
+Three problems found by outside developers, fixed.
+
+- **`Idempotency-Key` is checked before sending.** The client now refuses a key
+  that is not printable ASCII (0x21–0x7E), 8–64 characters, with an
+  `InvalidArgumentException` ("Idempotency-Key yalnız ASCII karakterler
+  içerebilir …"), and sends nothing. The API will also answer `400 VALIDATION`
+  for such a key in its next release.
+- **`baseUrl` takes the address with or without `/v1`.** The documentation and
+  the OpenAPI document show `https://app.rewloy.com/v1`, but the client wanted
+  the origin only: a base of `…/v1` produced `/v1/v1/…` and a 404. Now both work;
+  a trailing `/v1` or `/v1/` and trailing slashes are stripped (`$client->baseUrl`
+  is the origin).
+- **`idempotencyKey` is required where the API requires it.** For `recordSale`,
+  `passAction`, `sendCampaign` and `refundShopRedemption` the OpenAPI document
+  marks the header required, but the client made up a random UUID when it was
+  missing, which does not survive a restart of your app. The key is now a
+  required argument of those methods (`idempotencyKey: string` in the array
+  shape; an `InvalidArgumentException` before sending if missing or `null`).
+  Where the header is optional (`issuePass`, …) a UUID is still generated and
+  reused on every retry. **Breaking for callers that relied on the generated
+  key** (a small break, taken in a patch release because the old behaviour
+  could write a sale twice).
+
 ## 0.2.0 (2026-10-05)
 
 Rewloy API 1.0.5'e göre yeniden üretildi: 255 işlem (0.1.0'da 229). Kasa için

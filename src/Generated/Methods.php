@@ -58,7 +58,7 @@ trait Methods
      * - `body.shopId`: Siparişin geldiği mağaza bağlantısı (`GET /v1/shops`). `orderId` ile birlikte.
      * - `body.ifExists`: Kişinin bu programda açık kartı varsa: `create` (varsayılan) yine yeni kart açar, `return` o kartı döndürür (`created: false`). `email` ister.
      * - `body.sendEmail`: true: kartın bağlantısı kişinin e-postasına gider (katılım formunun e-postası). `email` ister.
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header: 8–64 printable ASCII characters. When it is left out, the client generates one and sends the same one on every retry of this call.
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-issuePass API referansı
@@ -296,7 +296,7 @@ trait Methods
      * Arguments:
      * - `params.serial`: Kart seri numarası, XXXX-XXXX-XXXX
      * - `body.currency`: İsteğe bağlı: tutarın para birimi (ISO 4217, ör. `TRY`, `EUR`, büyük-küçük harf önemsiz). Tutar **kartın para birimindedir** (programın para birimi: `GET /v1/passes/{serial}` → `currency`, `GET /v1/programs/{id}`); verilirse onunla karşılaştırılır, farklıysa `422 CURRENCY_MISMATCH` (`details.currency` kartınki) ve hiçbir şey yazılmaz. Tutar çevrilmez.
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header, required: 8–64 printable ASCII characters. The client never makes one up (a generated key would not survive a restart of your app); it sends this one on every retry of the call.
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-passAction API referansı
@@ -312,7 +312,7 @@ trait Methods
      *         rewardIndex?: int,
      *         currency?: string,
      *     },
-     *     idempotencyKey?: string|null,
+     *     idempotencyKey: string,
      *     merchant?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
@@ -373,7 +373,7 @@ trait Methods
      * - `body.amountMinor`: Ödenen toplam, kartın (programın) para biriminde, kuruş
      * - `body.reference`: Fiş ya da sipariş numarası; defter kaydının notuna yazılır
      * - `body.currency`: İsteğe bağlı: tutarın para birimi (ISO 4217, ör. `TRY`, `EUR`, büyük-küçük harf önemsiz). Tutar **kartın para birimindedir** (programın para birimi: `GET /v1/passes/{serial}` → `currency`, `GET /v1/programs/{id}`); verilirse onunla karşılaştırılır, farklıysa `422 CURRENCY_MISMATCH` (`details.currency` kartınki) ve hiçbir şey yazılmaz. Tutar çevrilmez.
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header, required: 8–64 printable ASCII characters. The client never makes one up (a generated key would not survive a restart of your app); it sends this one on every retry of the call.
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-recordSale API referansı
@@ -386,7 +386,7 @@ trait Methods
      *         reference?: string,
      *         currency?: string,
      *     },
-     *     idempotencyKey?: string|null,
+     *     idempotencyKey: string,
      *     merchant?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
@@ -1057,7 +1057,7 @@ trait Methods
      * - `body.channel`: Kodun gideceği yol: `whatsapp` ya da `sms` (yalnız `phone` ile). Verilmezse şu an açık olan ilk yol (önce WhatsApp). Açık değilse `501 NOT_ENABLED`, bugünkü bütçesi dolduysa `503 PHONE_BUSY`; ikisinde de `details.channels` şu an açık olanları söyler.
      * - `body.deviceName`: Bu cihazın Cihazlarım listesindeki adı (örn. "Ada'nın telefonu"); yoksa "Rewloy uygulaması".
      * - `body.previousToken`: Bu kurulumun daha önceki `rwh_…` oturumu, süresi dolmuş olsa da (çıkış yapılmış ya da kaldırılmış olmasın). Adres hesabınızınsa adres başına saatlik kod sınırı size uygulanmaz: başkaları kodlarınızı tüketemez.
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header: 8–64 printable ASCII characters. When it is left out, the client generates one and sends the same one on every retry of this call.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-holderLogin API referansı
      *
@@ -5474,7 +5474,7 @@ trait Methods
      * Arguments:
      * - `body.name`: Yalnız panelde görünen ad
      * - `body.segment`: Segmentin `ref` değeri (`GET /v1/segments`)
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header, required: 8–64 printable ASCII characters. The client never makes one up (a generated key would not survive a restart of your app); it sends this one on every retry of the call.
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-sendCampaign API referansı
@@ -5489,7 +5489,7 @@ trait Methods
      *         at?: string,
      *         localAt?: string,
      *     },
-     *     idempotencyKey?: string|null,
+     *     idempotencyKey: string,
      *     merchant?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
@@ -10649,7 +10649,7 @@ trait Methods
      *
      * Arguments:
      * - `body.reason`: Neden (kayda geçer, defter kaydının notu olur)
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header, required: 8–64 printable ASCII characters. The client never makes one up (a generated key would not survive a restart of your app); it sends this one on every retry of the call.
      * - `merchant`: Ekip oturumu birden fazla işletmede koltuk taşıyorsa hangi işletme için olduğu (tek işletmede gerekmez). The `Rewloy-Merchant` header; the client's `merchant` by default.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-refundShopRedemption API referansı
@@ -10657,7 +10657,7 @@ trait Methods
      * @param array{
      *     params: array{id: string, redemptionId: string},
      *     body: array{amountMinor: int, reason: string},
-     *     idempotencyKey?: string|null,
+     *     idempotencyKey: string,
      *     merchant?: string|null,
      *     timeout?: int|float|null,
      *     maxRetries?: int|null,
@@ -14480,7 +14480,7 @@ trait Methods
      * `POST /v1/holder/identities/email`
      *
      * Arguments:
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header: 8–64 printable ASCII characters. When it is left out, the client generates one and sends the same one on every retry of this call.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-addHolderEmail API referansı
      *
@@ -14554,7 +14554,7 @@ trait Methods
      * Arguments:
      * - `body.phone`: Bir Türkiye cep telefonu numarası: `+905321234567`, `05321234567`, `532 123 45 67` (boşluklar yok sayılır). Telefonla giriş açık değilse `501 NOT_ENABLED`.
      * - `body.channel`: Kodun gideceği yol: `whatsapp` ya da `sms` (yalnız `phone` ile). Verilmezse şu an açık olan ilk yol (önce WhatsApp). Açık değilse `501 NOT_ENABLED`, bugünkü bütçesi dolduysa `503 PHONE_BUSY`; ikisinde de `details.channels` şu an açık olanları söyler.
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header: 8–64 printable ASCII characters. When it is left out, the client generates one and sends the same one on every retry of this call.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-addHolderPhone API referansı
      *
@@ -14716,7 +14716,7 @@ trait Methods
      * - `body.email`: Yeni e-posta (bir e-postanın yerine)
      * - `body.phone`: Yeni numara (bir numaranın yerine)
      * - `body.channel`: Kodun gideceği yol: `whatsapp` ya da `sms` (yalnız `phone` ile). Verilmezse şu an açık olan ilk yol (önce WhatsApp). Açık değilse `501 NOT_ENABLED`, bugünkü bütçesi dolduysa `503 PHONE_BUSY`; ikisinde de `details.channels` şu an açık olanları söyler.
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header: 8–64 printable ASCII characters. When it is left out, the client generates one and sends the same one on every retry of this call.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-replaceHolderIdentity API referansı
      *
@@ -15674,7 +15674,7 @@ trait Methods
      * - `body.businesses`: Kartlarının olduğu işletmeler
      * - `body.lastVisit`: 1m: son bir ay · 3m: 1–3 ay · 6m: 3–6 ay · old: 6 aydan önce · unknown: hatırlamıyor
      * - `body.previousToken`: Bu kurulumun önceki `rwh_` oturumu, varsa
-     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.
+     * - `idempotencyKey`: Aynı işlemin iki kez yapılmasını önler: aynı anahtarla tekrar, ilk sonucu döndürür. The `Idempotency-Key` header: 8–64 printable ASCII characters. When it is left out, the client generates one and sends the same one on every retry of this call.
      *
      * @see https://rewloy.com/gelistiriciler/api#op-startHolderRecovery API referansı
      *

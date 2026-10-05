@@ -202,13 +202,54 @@ final class ClientTest extends TestCase
         self::assertNull($this->stub->last()->header('content-type'));
     }
 
-    public function testGeneratesAnIdempotencyKeyWhenNoneIsGivenAndSendsTheGivenOne(): void
+    public function testGeneratesAnIdempotencyKeyWhereItIsOptionalAndSendsTheGivenOne(): void
     {
         $c = $this->client('key');
-        $c->passAction(['params' => ['serial' => Api::SERIAL], 'body' => ['action' => 'earn-stamps', 'locationId' => Api::LOCATION, 'count' => 2]]);
+        $c->issuePass(['body' => ['programId' => 'p1', 'name' => 'Ayşe']]);
         self::assertMatchesRegularExpression(Api::UUID, (string) $this->stub->last()->header('idempotency-key'));
-        $c->passAction(['params' => ['serial' => Api::SERIAL], 'body' => ['action' => 'earn-stamps', 'locationId' => Api::LOCATION], 'idempotencyKey' => 'fis-000123']);
+        $c->issuePass(['body' => ['programId' => 'p1'], 'idempotencyKey' => 'kayit-000123']);
+        self::assertSame('kayit-000123', $this->stub->last()->header('idempotency-key'));
+    }
+
+    public function testRequiresTheIdempotencyKeyWhereTheApiDoesAndNeverMakesOneUp(): void
+    {
+        $c = $this->client('key');
+        $call = ['params' => ['serial' => Api::SERIAL], 'body' => ['action' => 'earn-stamps', 'locationId' => Api::LOCATION, 'count' => 2]];
+        self::refused('passAction needs idempotencyKey', static fn () => $c->request('passAction', $call));
+        self::refused('passAction needs idempotencyKey', static fn () => $c->request('passAction', $call + ['idempotencyKey' => null]));
+        self::refused('sendCampaign needs idempotencyKey', static fn () => $c->request('sendCampaign', ['body' => ['body' => 'Merhaba']]));
+        self::assertSame([], $this->stub->requests, 'nothing was sent');
+        $c->passAction($call + ['idempotencyKey' => 'fis-000123']);
         self::assertSame('fis-000123', $this->stub->last()->header('idempotency-key'));
+    }
+
+    public function testRefusesAnIdempotencyKeyThatCannotBeAHeaderValueBeforeSending(): void
+    {
+        $c = $this->client('key');
+        $call = ['params' => ['serial' => Api::SERIAL], 'body' => ['action' => 'earn-stamps', 'locationId' => Api::LOCATION]];
+        foreach (['fiş-000123-ğ', 'with space 123', 'kısa', str_repeat('a', 65), '', "tab\there-123", "satir\nsonu-123", "valid-key-1\n"] as $bad) {
+            self::refused('Idempotency-Key yalnız ASCII karakterler içerebilir', static fn () => $c->passAction($call + ['idempotencyKey' => $bad]));
+        }
+        self::refused('printable ASCII', static fn () => $c->issuePass(['body' => ['programId' => 'p1'], 'idempotencyKey' => 'çiçek-çiçek-1']));
+        self::assertSame([], $this->stub->requests, 'nothing was sent');
+        foreach (['12345678', str_repeat('a', 64), 'kasa3-z0187-fis0042', '!~#$%&()*+,-./:;<=>?@[]^_{|}'] as $good) {
+            $c->passAction($call + ['idempotencyKey' => $good]);
+            self::assertSame($good, $this->stub->last()->header('idempotency-key'));
+        }
+    }
+
+    public function testAcceptsTheBaseUrlWithOrWithoutV1(): void
+    {
+        foreach (['', '/', '/v1', '/v1/', '//v1//'] as $suffix) {
+            $c = new Client(apiKey: Api::KEY, baseUrl: 'https://api.test' . $suffix, transport: $this->stub);
+            self::assertSame('https://api.test', $c->baseUrl, $suffix);
+            $c->getPass(['params' => ['serial' => Api::SERIAL]]);
+            self::assertSame('https://api.test/v1/passes/' . Api::SERIAL, $this->stub->last()->url, $suffix);
+        }
+        self::assertSame('https://app.rewloy.com', (new Client(baseUrl: 'https://app.rewloy.com/v1'))->baseUrl);
+        self::assertSame('https://app.rewloy.com', (new Client(baseUrl: 'https://app.rewloy.com/v1/'))->baseUrl);
+        self::assertSame('https://proxy.example.com/rewloy', (new Client(baseUrl: 'https://proxy.example.com/rewloy/v1'))->baseUrl);
+        self::assertSame('https://proxy.example.com/rewloy', (new Client(baseUrl: 'https://proxy.example.com/rewloy'))->baseUrl);
     }
 
     public function testEncodesPathParametersAndTheQuery(): void
@@ -236,7 +277,7 @@ final class ClientTest extends TestCase
     public function testGivesTheWholeAnswerThroughRequest(): void
     {
         $c = $this->client('key');
-        $res = $c->request('sendCampaign', ['body' => ['body' => 'Bu hafta kahveler 2 damga!']]);
+        $res = $c->request('sendCampaign', ['body' => ['body' => 'Bu hafta kahveler 2 damga!'], 'idempotencyKey' => 'kampanya-2026-10-03']);
         self::assertInstanceOf(Response::class, $res);
         self::assertSame(201, $res->status);
         self::assertSame(['id' => 'c1'], $res->data);

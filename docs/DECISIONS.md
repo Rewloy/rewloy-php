@@ -11,8 +11,10 @@ understand (5), English library text with the API's Turkish descriptions and
 a bilingual README (8), a credential is left out where an operation does not
 take its kind but works without one (13), construction is checked (14), the
 retry rules and their numbers (15), timeouts per attempt, for a stream only
-until its headers (16), UUID v4 idempotency keys sent for every operation that
-declares the header (17), streams reconnect by default (21), webhooks accept
+until its headers (16), idempotency keys (17: required where the API's
+document says so and never made up for those, printable ASCII of 8–64
+characters checked before sending, a UUID v4 only where optional), streams
+reconnect by default (21), webhooks accept
 any `v1` and any of several secrets with a ±300 s tolerance (22), and the
 regeneration workflow (24).
 
@@ -109,7 +111,8 @@ regeneration workflow (24).
     - **Unknown keys:** a top-level key the operation does not take, such as
       `idempotency_key`, throws `InvalidArgumentException`. Most PHP callers
       have no static analysis, and a misspelt `idempotencyKey` would
-      otherwise go unnoticed, with a generated key sent instead.
+      otherwise go unnoticed (where the key is optional, with a generated
+      one sent instead).
     - **Wrong values:** a missing path parameter or a wrong value type is
       refused the same way.
     - **The exception class:** programming errors are

@@ -665,7 +665,7 @@ final class Generator
         }
         // Null leaves an option out, as the client reads it: handy when the value comes from a nullable variable.
         if ($op['idempotency'] !== null) {
-            $members[] = 'idempotencyKey?: string|null';
+            $members[] = $op['idempotency']['required'] ? 'idempotencyKey: string' : 'idempotencyKey?: string|null';
         }
         if ($op['merchant'] !== null) {
             $members[] = 'merchant?: string|null';
@@ -731,7 +731,9 @@ final class Generator
         }
         if ($op['idempotency'] !== null) {
             $notes[] = self::note('idempotencyKey', trim(($op['idempotency']['description'] ?? '')
-                . ' The `Idempotency-Key` header. When it is left out, the client generates one and sends the same one on every retry of this call.'));
+                . ($op['idempotency']['required']
+                    ? ' The `Idempotency-Key` header, required: 8–64 printable ASCII characters. The client never makes one up (a generated key would not survive a restart of your app); it sends this one on every retry of the call.'
+                    : ' The `Idempotency-Key` header: 8–64 printable ASCII characters. When it is left out, the client generates one and sends the same one on every retry of this call.')));
         }
         if ($op['merchant'] !== null) {
             $notes[] = self::note('merchant', trim(($op['merchant']['description'] ?? '')

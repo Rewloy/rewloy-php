@@ -45,7 +45,7 @@ class Client
     use Methods;
 
     /** This library's version (the latest in CHANGELOG.md; a test keeps them equal). */
-    public const VERSION = '0.2.0';
+    public const VERSION = '0.2.1';
     public const DEFAULT_BASE_URL = 'https://app.rewloy.com';
     /** Seconds allowed for one attempt. */
     public const DEFAULT_TIMEOUT = 60.0;
@@ -88,7 +88,8 @@ class Client
      * @param string|null $merchant With a staff session: the business it acts for
      *                              (`Rewloy-Merchant`), when the person has seats in several.
      * @param string|null $holderSession A card holder's session, `rwh_…`: a Rewloy Cüzdan app.
-     * @param string $baseUrl The API's origin, without `/v1`.
+     * @param string $baseUrl The API's address: `https://app.rewloy.com` or `https://app.rewloy.com/v1`
+     *                        (a trailing `/v1` and trailing slashes are dropped; the client adds `/v1` itself).
      * @param int|float $timeout Seconds allowed for one attempt; 0 for none.
      * @param int $maxRetries Retries after a failed attempt, when retrying is safe.
      * @param Transport|null $transport How to talk HTTP; curl when null.
@@ -134,7 +135,7 @@ class Client
             throw new InvalidArgumentException('Rewloy: `maxRetries` must be 0 or more');
         }
         $this->merchant = $merchant;
-        $this->baseUrl = rtrim($baseUrl, '/');
+        $this->baseUrl = self::normalizeBaseUrl($baseUrl);
         $this->timeout = (float) $timeout;
         $this->maxRetries = $maxRetries;
         $this->transport = $transport ?? new CurlTransport();
@@ -684,7 +685,13 @@ class Client
         }
         if ($op['idempotency'] !== null) {
             $key = $args['idempotencyKey'] ?? null;
-            $h['idempotency-key'] = $key === null ? self::uuid() : self::scalar($id, 'idempotencyKey', $key);
+            if ($key === null && $op['idempotency'] === 'required') {
+                throw new InvalidArgumentException(sprintf(
+                    'Rewloy: %s needs idempotencyKey: Idempotency-Key gerekli, kütüphane uydurmaz (8–64 ASCII karakter) / the Idempotency-Key is required and is never generated for you (8–64 printable ASCII characters)',
+                    $id,
+                ));
+            }
+            $h['idempotency-key'] = $key === null ? self::uuid() : self::idempotencyKey(self::scalar($id, 'idempotencyKey', $key));
         }
         if ($op['body']) {
             $h['content-type'] = 'application/json';
@@ -698,10 +705,37 @@ class Client
         }
         foreach ($extra as $name => $value) {
             if ($value !== null) {
-                $h[strtolower((string) $name)] = self::scalar($id, 'headers.' . $name, $value);
+                $name = strtolower((string) $name);
+                $value = self::scalar($id, 'headers.' . $name, $value);
+                $h[$name] = $name === 'idempotency-key' ? self::idempotencyKey($value) : $value;
             }
         }
         return $h;
+    }
+
+    /**
+     * The base URL without trailing slashes and without a trailing `/v1`: the operations' paths
+     * carry `/v1` themselves, and the documentation shows the address both ways.
+     */
+    public static function normalizeBaseUrl(string $url): string
+    {
+        $url = rtrim($url, '/');
+        if (str_ends_with($url, '/v1')) {
+            $url = rtrim(substr($url, 0, -3), '/');
+        }
+        return $url;
+    }
+
+    /**
+     * An `Idempotency-Key` is 8–64 printable ASCII characters (0x21–0x7E): a header value cannot
+     * carry anything else.
+     */
+    private static function idempotencyKey(string $key): string
+    {
+        if (preg_match('/\A[\x21-\x7e]{8,64}\z/', $key) !== 1) {
+            throw new InvalidArgumentException('Rewloy: Idempotency-Key yalnız ASCII karakterler içerebilir (görünür karakterler, 8–64) / the Idempotency-Key must be printable ASCII (0x21–0x7E), 8–64 characters');
+        }
+        return $key;
     }
 
     /**

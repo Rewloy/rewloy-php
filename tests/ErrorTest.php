@@ -52,7 +52,7 @@ final class ErrorTest extends TestCase
     {
         $this->answer = static fn (): HttpResponse => Api::json(409, Api::error('INSUFFICIENT_BALANCE', 409, 'bakiye yetersiz: 40,00 ₺ var'), ['x-request-id' => '0192f7c1-8b2e-7a31-9c1d-000000000009']);
         $c = $this->client;
-        $e = self::caught(static fn () => $c->passAction(['params' => ['serial' => Api::SERIAL], 'body' => ['action' => 'spend', 'locationId' => Api::LOCATION, 'amountMinor' => 5000]]));
+        $e = self::caught(static fn () => $c->passAction(['params' => ['serial' => Api::SERIAL], 'body' => ['action' => 'spend', 'locationId' => Api::LOCATION, 'amountMinor' => 5000], 'idempotencyKey' => 'fis-000123']));
         self::assertSame(RewloyException::class, $e::class);
         self::assertInstanceOf(RuntimeException::class, $e);
         self::assertSame(409, $e->status);
@@ -75,7 +75,7 @@ final class ErrorTest extends TestCase
         $details = [['field' => 'body', 'rule' => 'maxLength', 'message' => 'en fazla 180 karakter olmalı']];
         $this->answer = static fn (): HttpResponse => Api::json(400, Api::error('VALIDATION', 400, 'Gönderilen bilgiler geçersiz (gövde): body en fazla 180 karakter olmalı', $details));
         $c = $this->client;
-        $e = self::caught(static fn () => $c->sendCampaign(['body' => ['body' => str_repeat('x', 200)]]));
+        $e = self::caught(static fn () => $c->sendCampaign(['body' => ['body' => str_repeat('x', 200)], 'idempotencyKey' => 'kampanya-0001']));
         self::assertSame('VALIDATION', $e->errorCode);
         self::assertSame($details, $e->details);
         self::assertSame('Gönderilen bilgiler geçersiz', $e->title);

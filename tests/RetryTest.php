@@ -21,7 +21,7 @@ use Throwable;
 
 final class RetryTest extends TestCase
 {
-    private const ACTION = ['params' => ['serial' => Api::SERIAL], 'body' => ['action' => 'earn-stamps', 'locationId' => Api::LOCATION]];
+    private const ACTION = ['params' => ['serial' => Api::SERIAL], 'body' => ['action' => 'earn-stamps', 'locationId' => Api::LOCATION], 'idempotencyKey' => 'fis-42-0001'];
 
     private Sleeps $sleeps;
 
@@ -178,11 +178,7 @@ final class RetryTest extends TestCase
         $c = $this->client($stub);
         self::assertSame(['balance' => 3, 'duplicate' => false], $c->passAction(self::ACTION));
         self::assertCount(2, $stub->requests);
-        $first = (string) $stub->request(0)->header('idempotency-key');
-        self::assertSame(36, strlen($first));
-        self::assertSame($first, $stub->request(1)->header('idempotency-key'));
-        $c->passAction(self::ACTION + ['idempotencyKey' => 'fis-42-0001']);
-        self::assertSame('fis-42-0001', $stub->request(2)->header('idempotency-key'));
+        self::assertSame(['fis-42-0001', 'fis-42-0001'], array_map(static fn (HttpRequest $r): ?string => $r->header('idempotency-key'), $stub->requests));
     }
 
     public function testWaitsOutIdempotencyInProgressOnACampaignSendThenReadsTheReplayedAnswer(): void

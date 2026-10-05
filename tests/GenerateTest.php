@@ -78,7 +78,7 @@ final class GenerateTest extends TestCase
      *
      * @return array<string, mixed>
      */
-    private static function fixture(): array
+    private static function fixture(bool $keyRequired = false): array
     {
         $envelope = static fn (mixed $data): array => ['content' => ['application/json' => ['schema' => ['type' => 'object', 'required' => ['data'], 'properties' => ['data' => $data]]]]];
         return [
@@ -125,7 +125,7 @@ final class GenerateTest extends TestCase
                     ],
                     'delete' => [
                         'operationId' => 'forgetThing', 'tags' => ['Şeyler'], 'summary' => 'Sil', 'security' => [['apiKey' => []], []],
-                        'parameters' => [['name' => 'id', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'string']], ['name' => 'Idempotency-Key', 'in' => 'header', 'required' => false, 'schema' => ['type' => 'string']]],
+                        'parameters' => [['name' => 'id', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'string']], ['name' => 'Idempotency-Key', 'in' => 'header', 'required' => $keyRequired, 'schema' => ['type' => 'string']]],
                         'responses' => ['204' => ['description' => 'Tamam — gövde yok.']],
                     ],
                 ],
@@ -228,6 +228,7 @@ final class GenerateTest extends TestCase
         self::assertStringContainsString("     *     reconnect?: bool|null,\n     *     idleTimeout?: int|float|null,\n", $methods);
         self::assertStringContainsString("    public function forgetThing(array \$args): void\n    {\n        \$this->call('forgetThing', \$args);\n    }", $methods);
         self::assertStringContainsString("     *     idempotencyKey?: string|null,\n", $methods);
+        self::assertStringContainsString('printable ASCII characters. When it is left out', $methods);
         self::assertStringContainsString(implode("\n", [
             '     * @param array{',
             '     *     query?: array{page?: int|null},',
@@ -238,6 +239,14 @@ final class GenerateTest extends TestCase
         $codes = self::file(self::fixture(), 'ErrorCode.php');
         self::assertStringContainsString("    /** Bulunamadı */\n    public const NOT_FOUND = 'NOT_FOUND';\n    public const INTERNAL = 'INTERNAL';\n", $codes);
         self::assertStringContainsString("    public const TITLES = [\n        'NOT_FOUND' => 'Bulunamadı',\n    ];", $codes);
+    }
+
+    public function testMakesTheIdempotencyKeyRequiredWhereTheDocumentRequiresTheHeader(): void
+    {
+        $files = self::files(self::fixture(true));
+        self::assertStringContainsString("     *     idempotencyKey: string,\n", ($files['Methods.php'] ?? ''));
+        self::assertStringNotContainsString("     *     idempotencyKey?: string|null,\n", ($files['Methods.php'] ?? ''));
+        self::assertStringContainsString("'idempotency' => 'required'", ($files['Operations.php'] ?? ''));
     }
 
     public function testWritesPhpThatParses(): void
