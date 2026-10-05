@@ -97,6 +97,13 @@ final class ErrorTest extends TestCase
         $e = self::caught(static fn () => $c->listPrograms());
         self::assertInstanceOf(RateLimitException::class, $e);
         self::assertNull($e->retryAfter);
+        self::assertNull($e->rateLimit());
+        $this->answer = static fn (): HttpResponse => Api::json(429, Api::error('RATE_LIMITED', 429, 'sınır'), ['retry-after' => '9', 'ratelimit-limit' => '60', 'ratelimit-remaining' => '0', 'ratelimit-reset' => '9']);
+        $e = self::caught(static fn () => $c->listPrograms());
+        self::assertInstanceOf(RateLimitException::class, $e);
+        $limit = $e->rateLimit();
+        self::assertNotNull($limit);
+        self::assertSame([60, 0, 9], [$limit->limit, $limit->remaining, $limit->reset]);
     }
 
     public function testNamesAnAnswerThatIsNotRewloysByItsStatus(): void

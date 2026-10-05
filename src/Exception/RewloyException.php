@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Rewloy\Exception;
 
+use Rewloy\RateLimit;
 use RuntimeException;
 use Throwable;
 
@@ -59,6 +60,12 @@ class RewloyException extends RuntimeException
             $status,
             $previous,
         );
+    }
+
+    /** The `RateLimit-*` headers of the answer; null when it carried none. */
+    public function rateLimit(): ?RateLimit
+    {
+        return RateLimit::fromHeaders($this->headers);
     }
 
     /** A header of the answer, its values joined with ", ", or null. */

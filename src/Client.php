@@ -45,7 +45,7 @@ class Client
     use Methods;
 
     /** This library's version (the latest in CHANGELOG.md; a test keeps them equal). */
-    public const VERSION = '0.2.1';
+    public const VERSION = '0.2.2';
     public const DEFAULT_BASE_URL = 'https://app.rewloy.com';
     /** Seconds allowed for one attempt. */
     public const DEFAULT_TIMEOUT = 60.0;
@@ -150,7 +150,8 @@ class Client
 
     /**
      * Calls an operation and returns the whole answer: `data`, `meta` on paged
-     * lists, the status, headers, `requestId`, `mode` and `replayed`.
+     * lists, the status, headers, `requestId`, `mode` and `replayed`; `rateLimit()` reads
+     * the `RateLimit-*` headers.
      *
      *     $res = $rewloy->request('sendCampaign', ['body' => ['body' => 'Bu hafta kahveler 2 damga!']]);
      *     $res->status; $res->replayed; $res->data['id'];

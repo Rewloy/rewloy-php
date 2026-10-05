@@ -32,6 +32,12 @@ final readonly class Response
     ) {
     }
 
+    /** The `RateLimit-*` headers of the answer; null when it carries none (anonymous calls). */
+    public function rateLimit(): ?RateLimit
+    {
+        return RateLimit::fromHeaders($this->headers);
+    }
+
     /** A header's values joined with ", ", or null when it is absent. */
     public function header(string $name): ?string
     {

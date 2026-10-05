@@ -5,6 +5,39 @@ https://rewloy.com/gelistiriciler/degisiklikler
 
 This library's releases. The API's own changes are listed at the link above.
 
+## 0.2.2 (2026-10-05)
+
+Rewloy 1.1.0'a (API sürümü) göre yeniden üretildi: 256 işlem (0.2.1'de 255). Kasa
+için `reverseAction`, `recordSale`'de `occurredAt`, `passAction`'da `reference`;
+yanıtlarda `RateLimit-*` başlıkları.
+
+Regenerated from Rewloy 1.1.0 (the product version in `info.version`): 256
+operations (255 in 0.2.1).
+
+- **New operation: `reverseAction`** (`POST /v1/passes/{serial}/actions/reverse`).
+  Voids a till action made with `passAction` (`spend`, `spend-points`,
+  `redeem-stamps`, `redeem-reward`, `use`), found by its `actionKey` (the
+  `Idempotency-Key` it was sent with) or its `reference`. It needs no
+  `Idempotency-Key`: an action is voided once and a repeat answers
+  `duplicate: true`. New error codes `ACTION_NOT_FOUND`, `ACTION_AMBIGUOUS`,
+  `ACTION_NOT_REVERSIBLE` (constants of `ErrorCode`).
+- **`recordSale` takes an optional `occurredAt`**: when the sale really happened
+  (ISO 8601 with offset), for a till that queues sales while offline.
+- **`passAction` takes an optional `reference`**, and its answer is documented as
+  the union of two array shapes: the balance-card answer (`balance`, `detail`,
+  `promotion`) or the coupon / discount-card answer (`status`, `uses`,
+  `usesLeft`). Narrow with `isset($answer['uses'])`.
+- **Rate limit headers.** `Response::rateLimit()` and
+  `RewloyException::rateLimit()` (including `RateLimitException`) return a
+  `Rewloy\RateLimit` (`limit`, `remaining`, `reset`, from `RateLimit-Limit`,
+  `RateLimit-Remaining`, `RateLimit-Reset`) or null when the answer has none.
+  Additive.
+- Webhook-creation responses may carry `warnings` (a non-live installation whose
+  URL production would refuse); the `Idempotency-Key` parameter documents its
+  8–64 printable ASCII rule; the API's descriptions no longer contain internal
+  `ADR n` references. README: the till example has a void step and a note on
+  `occurredAt` for offline queues.
+
 ## 0.2.1 (2026-10-05)
 
 Dışarıdan geliştiricilerin bulduğu üç sorun düzeltildi.

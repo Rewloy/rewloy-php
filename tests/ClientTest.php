@@ -37,7 +37,13 @@ final class ClientTest extends TestCase
                 return Api::json(200, ['openapi' => '3.1.0', 'paths' => []]);
             }
             if ($path === '/v1/campaigns' && $req->method === 'POST') {
-                return Api::json(201, ['data' => ['id' => 'c1']], ['idempotent-replayed' => 'true', 'rewloy-mode' => 'test', 'x-request-id' => 'r-campaign']);
+                return Api::json(201, ['data' => ['id' => 'c1']], ['idempotent-replayed' => 'true', 'rewloy-mode' => 'test', 'x-request-id' => 'r-campaign', 'ratelimit-limit' => '120', 'ratelimit-remaining' => '117', 'ratelimit-reset' => '41']);
+            }
+            if (str_ends_with($path, '/actions/reverse')) {
+                return Api::json(200, ['data' => ['type' => 'giftcard', 'undone' => 'spend', 'restored' => 5000, 'balance' => 5000, 'uses' => null, 'usesLeft' => null, 'status' => 'active', 'reopened' => false, 'duplicate' => false, 'rewardReady' => false, 'rewardsReady' => 0]]);
+            }
+            if (str_ends_with($path, '/actions') && $req->method === 'POST') {
+                return Api::json(200, ['data' => ['status' => 'active', 'duplicate' => false, 'uses' => 3, 'usesLeft' => 2]]);
             }
             return Api::json(200, ['data' => ['ok' => true]]);
         });
@@ -285,16 +291,42 @@ final class ClientTest extends TestCase
         self::assertSame('r-campaign', $res->requestId);
         self::assertSame('test', $res->mode);
         self::assertTrue($res->replayed);
+        $limit = $res->rateLimit();
+        self::assertNotNull($limit);
+        self::assertSame([120, 117, 41], [$limit->limit, $limit->remaining, $limit->reset]);
         self::assertSame('application/json; charset=utf-8', $res->header('Content-Type'));
         $list = $c->request('listCustomers');
         self::assertSame(['page' => 1, 'pageSize' => 50, 'total' => 1], $list->meta);
         self::assertSame([['personId' => 'p1']], $list->data);
         self::assertNull($list->mode);
         self::assertFalse($list->replayed);
+        self::assertNull($list->rateLimit(), 'no RateLimit headers, no rateLimit');
         $none = $this->client('staff')->request('revokeApiKey', ['params' => ['id' => Api::LOCATION]]);
         self::assertSame(204, $none->status);
         self::assertNull($none->data);
         self::assertSame('r-204', $none->requestId);
+    }
+
+    public function testReversesATillActionWithoutAnIdempotencyKeyAndReadsPassActionsTwoAnswers(): void
+    {
+        $c = $this->client('key');
+        $back = $c->reverseAction(['params' => ['serial' => Api::SERIAL], 'body' => ['actionKey' => 'kasa3-z0187-fis0042', 'locationId' => Api::LOCATION]]);
+        self::assertSame('spend', $back['undone']);
+        self::assertSame(5000, $back['restored']);
+        $last = $this->stub->last();
+        self::assertSame('POST', $last->method);
+        self::assertSame('/v1/passes/' . Api::SERIAL . '/actions/reverse', StubTransport::target($last));
+        self::assertNull($last->header('idempotency-key'), 'the API does not ask for one');
+        self::assertSame(['actionKey' => 'kasa3-z0187-fis0042', 'locationId' => Api::LOCATION], json_decode($last->body ?? '', true));
+
+        $use = $c->passAction(['params' => ['serial' => Api::SERIAL], 'body' => ['action' => 'use', 'locationId' => Api::LOCATION], 'idempotencyKey' => 'kasa3-z0187-fis0043']);
+        // Two array shapes, narrowed by the key that exists in one only.
+        self::assertArrayNotHasKey('balance', $use);
+        if (isset($use['uses'])) {
+            self::assertSame(2, $use['usesLeft']);
+        } else {
+            self::fail('the coupon answer has uses');
+        }
     }
 
     public function testOpensStreamsThroughTheirMethodsNotRequest(): void

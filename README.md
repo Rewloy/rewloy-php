@@ -194,6 +194,48 @@ Bir satış bir kez geri alınır (tekrar `duplicate: true` döner). Kazanılan
 kullanılmışsa (ödüle ya da harcamaya gitmişse) `409 SALE_ALREADY_SPENT` gelir ve
 hiçbir şey yazılmaz.
 
+**Çevrimdışı kasa kuyruğu: `occurredAt`.** Bağlantı koptuğunda satışı sonra
+yazıyorsanız `occurredAt` ile satışın gerçekten olduğu anı (ISO 8601, saat
+dilimiyle) gönderin; kartın geçmişinde o anla görünür. Gelecekte olamaz (2
+dakikalık saat farkı kabul edilir). `idempotencyKey` kuyruktaki kayıtla birlikte
+saklanır, tekrar gönderilince satış ikinci kez yazılmaz.
+
+```php
+$rewloy->recordSale([
+    'params' => ['serial' => $seri],
+    'body' => ['locationId' => $subeId, 'amountMinor' => 4550, 'reference' => 'fis-' . $fisNo, 'occurredAt' => '2026-10-05T14:32:10+03:00'],
+    'idempotencyKey' => $anahtar,
+]);
+```
+
+**Kasa işlemini iptal etmek: `reverseAction`.** `passAction` ile yapılan bir
+harcama, ödül ya da kullanım yanlışlıkla yapıldıysa (`spend`, `spend-points`,
+`redeem-stamps`, `redeem-reward`, `use`) `reverseAction` tamamını geri verir.
+İşlemi, yaparken gönderdiğiniz `Idempotency-Key` (`actionKey`) ya da işlemin
+`reference` değeriyle bulur (`passAction` artık isteğe bağlı bir `reference`
+alır). `reverseAction` bir `Idempotency-Key` **istemez**: bir işlem bir kez geri
+alınır, tekrar `duplicate: true` döner.
+
+```php
+$rewloy->passAction([
+    'params' => ['serial' => $seri],
+    'body' => ['action' => 'spend', 'locationId' => $subeId, 'amountMinor' => 2500],
+    'idempotencyKey' => 'kasa3-z0187-iptal' . $fisNo,
+]);
+$iptal = $rewloy->reverseAction([
+    'params' => ['serial' => $seri],
+    'body' => ['actionKey' => 'kasa3-z0187-iptal' . $fisNo, 'locationId' => $subeId],   // ya da ['reference' => 'fis-' . $fisNo]
+]);
+echo $iptal['undone'], ' ', $iptal['restored'], ' geri verildi, bakiye ', $iptal['balance'], "\n";
+```
+
+`passAction`ın yanıtı kart türüne göre iki biçimdedir (PHPDoc'ta iki dizi
+şeklinin birleşimi): bakiyeli kartlarda `balance` (damga, puan, VIP, cashback,
+hediye kartı), kupon ve indirim kartında `status`, `uses` ve `usesLeft`
+(`isset($sonuc['uses'])` ile ayırın; PHPStan ve Psalm bunu daraltır).
+Kazanımlar (`earn-stamps`, `earn-points`, `visit`) `reverseAction`la değil
+`reverseSale`la geri alınır.
+
 ### `Idempotency-Key`
 
 `recordSale`, `passAction`, `sendCampaign` ve `refundShopRedemption` bir
@@ -440,7 +482,9 @@ try {
 - `body`, `headers`, `docs` ve `operation`.
 
 Alt sınıflar:
-- `RateLimitException`: `429`; `retryAfter` saniye;
+- `RateLimitException`: `429`; `retryAfter` saniye. Her istisna (bu dahil)
+  yanıtın `RateLimit-*` başlıklarını `$e->rateLimit()` ile verir
+  (`Rewloy\RateLimit`: `limit`, `remaining`, `reset`; başlık yoksa `null`);
 - `ConnectionException`: yanıt gelmedi (`status` 0, `errorCode`
   `CONNECTION_ERROR`);
 - `TimeoutException`: zaman aşımı (`TIMEOUT`); bir `ConnectionException`'dır.
@@ -488,13 +532,15 @@ $yanit = $rewloy->request('sendCampaign', [
 $yanit->status;      // 201
 $yanit->replayed;    // true: aynı anahtarın ilk yanıtı yeniden döndü (Idempotent-Replayed)
 $yanit->requestId;   // x-request-id
+$yanit->rateLimit(); // RateLimit-* başlıkları: limit, remaining, reset (yoksa null)
 $yanit->mode;        // Rewloy-Mode
 $yanit->data;        // kampanya
 ```
 
 `request($islem, $argumanlar)` her işlemi çağırır ve yanıtın tamamını
 (`Rewloy\Response`) döndürür: `data`, sayfalı listede `meta`, `status`,
-`headers`, `requestId`, `mode` ve `replayed`.
+`headers`, `requestId`, `mode` ve `replayed` (`rateLimit()` istek sınırı
+başlıklarını okur).
 
 `mode`, yanıtın `Rewloy-Mode` başlığıdır: `live` ya da `test`. Başlık yoksa
 `null`.
@@ -626,6 +672,18 @@ $sale = $rewloy->recordSale([
     'body' => ['locationId' => $locationId, 'amountMinor' => 4550, 'reference' => 'receipt-' . $receiptNo],  // amount in the card's currency, minor units
     'idempotencyKey' => 'till3-z0187-r' . $receiptNo,
 ]);
+
+// A gift-card spend rung up by mistake? Void it by the key it was sent with:
+$rewloy->passAction([
+    'params' => ['serial' => $card['serial']],
+    'body' => ['action' => 'spend', 'locationId' => $locationId, 'amountMinor' => 2500],
+    'idempotencyKey' => 'till3-z0187-s' . $receiptNo,
+]);
+$voided = $rewloy->reverseAction([
+    'params' => ['serial' => $card['serial']],
+    'body' => ['actionKey' => 'till3-z0187-s' . $receiptNo],
+]);
+echo $voided['undone'], ' ', $voided['restored'], ' ', $voided['balance'], "\n";   // spend 2500 and the balance again
 ```
 
 - **Till.** `recordSale` writes a completed sale to a card (the card type and
@@ -633,6 +691,18 @@ $sale = $rewloy->recordSale([
   card's structured fields (`programName`, `currency`, `stamps`, `points`,
   `money`, `customer`); `reverseSale` takes a refunded sale back:
   `$rewloy->reverseSale(['params' => ['serial' => $serial], 'body' => ['saleKey' => $key]])`.
+  A void is `reverseAction`: it takes back a `passAction` that was a mistake
+  (`spend`, `spend-points`, `redeem-stamps`, `redeem-reward`, `use`), found by
+  the `Idempotency-Key` you sent with it (`actionKey`) or its `reference`; it
+  needs no `Idempotency-Key` of its own, and a repeat answers `duplicate: true`:
+  `$rewloy->reverseAction(['params' => ['serial' => $serial], 'body' => ['actionKey' => $key]])`.
+  A till that queues sales while offline sends `occurredAt` (ISO 8601 with the
+  UTC offset, not in the future) with `recordSale`, so the card's history shows
+  when the sale really happened; the queued `idempotencyKey` makes the resend
+  safe. `passAction` takes an optional `reference` too, and its answer is the
+  union of two array shapes: the balance-card answer (`balance`) or the coupon /
+  discount-card answer (`status`, `uses`, `usesLeft`; `isset($answer['uses'])`
+  narrows it).
 - **Idempotency keys.** `recordSale`, `passAction`, `sendCampaign` and
   `refundShopRedemption` need an `Idempotency-Key`: the API's OpenAPI document
   marks the header required for them, so `idempotencyKey` is a required
@@ -663,8 +733,9 @@ $sale = $rewloy->recordSale([
   bytes for files.
 - **The whole answer.** `$rewloy->request($id, $args)` returns a
   `Rewloy\Response` with `status`, `headers`, `requestId`, `mode` (the
-  `Rewloy-Mode` header: `live` or `test`) and `replayed`
-  (`Idempotent-Replayed`).
+  `Rewloy-Mode` header: `live` or `test`), `replayed`
+  (`Idempotent-Replayed`) and `rateLimit()` (`Rewloy\RateLimit` with `limit`,
+  `remaining`, `reset` from the `RateLimit-*` headers; null when absent).
 - **Pagination.** `$rewloy->paginate('listCustomers', $args)` is a generator
   over the items of every page.
 - **Streams.** `$rewloy->liveFeed()` (or `$rewloy->stream('liveFeed', $args)`)
@@ -696,7 +767,7 @@ $event = Rewloy\Webhook::verify($rawBody, $signatureHeader, $secret);
 
 - **Errors.** Failures throw `RewloyException` with `status`, `errorCode`
   (the API's stable code; constants in `Rewloy\Generated\ErrorCode`),
-  `title`, `detail`, `details`, `requestId` and `body`. Subclasses:
+  `title`, `detail`, `details`, `requestId`, `rateLimit()` and `body`. Subclasses:
   `RateLimitException` (`retryAfter`), `ConnectionException` and
   `TimeoutException`.
 - **What is retried.** Network errors, timeouts, 429, 502–504 and
