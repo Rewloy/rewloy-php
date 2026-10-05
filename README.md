@@ -44,7 +44,9 @@ use Rewloy\Client;
 $rewloy = new Client(apiKey: (string) getenv('REWLOY_API_KEY'));
 
 $kart = $rewloy->getPass(['params' => ['serial' => 'ABCD-EFGH-JKLM']]);
-echo $kart['type'], ' ', $kart['balance'] ?? '-', $kart['rewardReady'] ? ' (ödül hazır)' : '', "\n";
+// "Şimdi ne yapılabilir?" için `actions[].ready` okunur; `rewardReady` yalnız damga ve puanda "ödül hazır"dır.
+$odul = array_filter($kart['actions'], static fn (array $a): bool => in_array($a['action'], ['redeem-stamps', 'redeem-reward'], true) && $a['ready']);
+echo $kart['type'], ' ', $kart['balance'] ?? '-', $odul !== [] ? ' (ödül hazır)' : '', "\n";
 ```
 
 Her işlem, adı `operationId` olan bir metottur
@@ -170,10 +172,20 @@ if ($satis['applied'] === 'none') {
 } else {
     echo $satis['credited'], ' ', $satis['applied'], ' yazıldı, bakiye ', $satis['balance'], "\n";
 }
-if ($satis['rewardReady']) {
-    echo "Ödül hazır\n";
+// Fişi çizmek için ayrıca okumanız gerekmez: yazımdan sonraki kart `$satis['card']`'dadır (yetki yoksa null).
+foreach ($satis['card']['actions'] ?? [] as $a) {
+    if (in_array($a['action'], ['redeem-stamps', 'redeem-reward'], true) && $a['ready']) {
+        echo "Ödül hazır\n";
+    }
 }
 ```
+
+`actions[].ready`, kartın kendi durumuna göre işlemin şimdi yapılıp
+yapılamayacağıdır (damga ödülü hazır mı, puan bir ödüle yetiyor mu, bakiye var
+mı, kupon kullanılmamış mı, VIP ziyareti bu pencerede sayılmış mı). `rewardReady`
+aynen kalır ama türe göre anlam değiştirir: damga ve puanda "ödül hazır";
+cashback ve hediye kartında bakiye sıfırdan büyükse; **VIP'te her zaman
+`true`**. Kasa ekranında "Ödül hazır" yazısını yalnız damga ve puanda gösterin.
 
 `GET /v1/passes/{serial}` ayrıca `actions` (kartın aldığı kasa işlemleri ve
 şimdi yapılıp yapılamayacakları) ve `sale` (bir satışın bu kartta ne
@@ -235,6 +247,44 @@ hediye kartı), kupon ve indirim kartında `status`, `uses` ve `usesLeft`
 (`isset($sonuc['uses'])` ile ayırın; PHPStan bunu daraltır).
 Kazanımlar (`earn-stamps`, `earn-points`, `visit`) `reverseAction`la değil
 `reverseSale`la geri alınır.
+
+**Yazımın yanıtında kartın durumu: `card`.** `recordSale`, `passAction`,
+`reverseSale` ve `reverseAction` yanıtları `card` taşır: yazımdan sonraki kart,
+`getPass`'in `customer` hariç aynı alanlarıyla (`programName`, `currency`,
+`stamps`/`points`/`money`, `actions`…). Yazımla aynı işlemde okunur, yanıtın
+`balance`'ıyla aynı anı söyler. **Tekrarda** (`duplicate: true`) kartın
+**şimdiki** durumudur. Kimliğin kartın programında `passes.read` yetkisi yoksa
+(yalnız kasa yetkisi olan bir eklenti anahtarı) `card` `null`dır. `recordSale`
+yanıtındaki `reversed: true`, bu anahtarla yazılan satışın sonradan geri
+alındığını söyler (yalnız bir tekrarda olabilir; `credited` ilk isteğin
+yazdığıdır, kart onu artık taşımaz): fişi yeniden yazmak için yeni bir anahtar
+gönderin.
+
+**Kartın işlemleri: `listPassOperations`.** Kartın defterindeki işlemler,
+yeniden eskiye, sayfalı (`$rewloy->paginate('listPassOperations', ['params' => ['serial' => $seri]])`):
+bir kasa ekranındaki "son işlemler" listesi ve her birinin İade düğmesi için;
+kasanın kendi anahtar günlüğünü tutması gerekmez. Her işlemde `undoWith` hangi
+uç noktanın geri aldığını (`'sale/reverse'` ya da `'actions/reverse'`),
+`reversible` bu kimliğin şimdi geri alıp alamayacağını söyler; bu kimliğin kendi
+işlemlerinde `saleKey` ya da `actionKey` de gelir.
+
+```php
+foreach ($rewloy->paginate('listPassOperations', ['params' => ['serial' => $seri]]) as $islem) {
+    if (!$islem['reversible']) {
+        continue;
+    }
+    if ($islem['undoWith'] === 'sale/reverse') {
+        $rewloy->reverseSale(['params' => ['serial' => $seri], 'body' => ['saleKey' => $islem['saleKey']]]);
+    } else {
+        $rewloy->reverseAction(['params' => ['serial' => $seri], 'body' => ['actionKey' => $islem['actionKey']]]);
+    }
+}
+```
+
+**`occurredAt` reddedilirse** `400 VALIDATION` gelir ve
+`$e->details[0]['reason']` nedeni söyler: `in_future`, `too_old` (72 saatten
+eski), `before_issue` (kart o anda yoktu: `occurredAt` olmadan yeniden
+gönderin), `invalid`. Tanımadığınız bir `reason`'ı `invalid` gibi ele alın.
 
 ### `Idempotency-Key`
 
@@ -339,6 +389,21 @@ $rewloy->testWebhook(['params' => ['id' => $yeni['webhook']['id']]]);   // webho
 
 Adres herkese açık bir `https` adresi olmalıdır (test ortamında da);
 yerelde bir tünel kullanın.
+
+**Sırrı yenilemek.** Kaybolan ya da sızan bir sır için `rotateWebhookSecret`
+webhook'a yeni bir sır verir (yeni `secret` yalnız o yanıtta döner); webhook'u
+silip yeniden eklemek gerekmez. Eski sır 24 saat daha yeninin yanında imzalar:
+o sürede `Rewloy-Signature` iki `v1` taşır ve teslimler
+`Rewloy-Signature-Rotating: 1` başlığıyla gelir. `Webhook::verify()` her `v1`'i ve
+`$secret` olarak verilen birden çok sırrı dener; yenilemeden önce alıcınızı
+`[$yeni, $eski]` ile güncelleyin. `deleteWebhook` webhook'u teslim geçmişiyle
+birlikte kalıcı siler (`204`).
+
+```php
+$r = $rewloy->rotateWebhookSecret(['params' => ['id' => $webhookId]]);
+// yeni sırrı alıcınıza ekleyin, 24 saat sonra eskisini bırakın
+$olay = Rewloy\Webhook::verify($hamGovde, $imzaBasligi, [$r['secret'], $eskiSir]);
+```
 
 Tutmazsa `WebhookSignatureException` atar: 400 ile yanıtlayın ve hiçbir işlem
 yapmayın. Gövde mutlaka ham olmalıdır. JSON olarak çözülüp yeniden yazılan bir
@@ -565,6 +630,19 @@ $yanit->mode;   // 'test'
 - Webhook'lar teslim edilir ve `Rewloy-Test: 1` başlığıyla `"test": true`
   taşır.
 - Gerçek müşteri verisini test ortamına girmeyin.
+- `resetTestEnvironment` (1.2.0'dan beri) müşterileri, kartları, kodları ve
+  kayıtları siler; ortamın kimliği, programları, şubeleri, anahtarları ve
+  webhook'ları kalır, entegrasyonunuz aynı anahtarla sürer. Bir anahtar
+  sızdıysa `'body' => ['revokeKeys' => true]` anahtarları da geçersiz kılar ve
+  webhook'ları kapatır. Yanıt `deleted` ve `kept` sayılarını verir; `closed`
+  artık hep `null`dır.
+- POS için anahtar: `createApiKey(['body' => ['kind' => 'pos', 'locationId' => $subeId, 'register' => 'Kasa 1', 'password' => $sifre]])`
+  hazır Kasa rolüyle yalnız o şubede çalışan bir anahtar oluşturur; yanıttaki
+  `baseUrl` POS'a yazılacak adrestir.
+- `listAllBatches` işletmenin bütün hediye kartı, kupon ve indirim kodlarını
+  sayfalar (`status`: `open`, `full`, `expired`, `closed` ya da `archived`: kodun
+  programı arşivde, bağlantısı kart vermez). Arşivdeki bir programa kod
+  oluşturmak `409 PROGRAM_ARCHIVED` verir.
 
 Ayrıntı: https://rewloy.com/gelistiriciler#test-ortamı
 
@@ -703,6 +781,24 @@ echo $voided['undone'], ' ', $voided['restored'], ' ', $voided['balance'], "\n";
   union of two array shapes: the balance-card answer (`balance`) or the coupon /
   discount-card answer (`status`, `uses`, `usesLeft`; `isset($answer['uses'])`
   narrows it).
+- **`card` on write answers.** `recordSale`, `passAction`, `reverseSale` and
+  `reverseAction` answer with `card`: the card after the write, the fields of
+  `getPass` except `customer`, read in the same transaction (on a replay,
+  `duplicate: true`, it is the card's **current** state). A key without
+  `passes.read` in the card's programme gets `card: null`. `recordSale`'s
+  `reversed: true` (replays only) says the sale written under that key was
+  taken back since: send a new key to write the receipt again. For "can I act
+  now" read `card['actions'][]['ready']`; `rewardReady` means "reward ready" only
+  for stamp and points cards (always `true` on VIP, any balance on cashback and
+  gift cards).
+- **Recent operations.** `listPassOperations` lists a card's ledger operations,
+  newest first and paged, for a till's "last operations" screen: `undoWith`
+  (`'sale/reverse'` or `'actions/reverse'`), `reversible` and, for this
+  credential's own operations, `saleKey` / `actionKey` to pass straight to
+  `reverseSale` / `reverseAction`.
+- **Rejected `occurredAt`** is a `400 VALIDATION` whose `$e->details[0]['reason']`
+  is `in_future`, `too_old`, `before_issue` or `invalid` (treat an unknown
+  reason as `invalid`).
 - **Idempotency keys.** `recordSale`, `passAction`, `sendCampaign` and
   `refundShopRedemption` need an `Idempotency-Key`: the API's OpenAPI document
   marks the header required for them, so `idempotencyKey` is a required
@@ -762,6 +858,20 @@ $event = Rewloy\Webhook::verify($rawBody, $signatureHeader, $secret);
   once.
 - **Tests.** `Webhook::sign($body, $secret)` makes the header the platform
   would send.
+
+`rotateWebhookSecret` gives a webhook a new secret (returned only in that
+answer); the old one keeps signing for 24 hours, so `Rewloy-Signature` carries
+two `v1` values and the delivery has `Rewloy-Signature-Rotating: 1`.
+`Webhook::verify()` tries every `v1` and every secret you pass:
+`[$newSecret, $oldSecret]`. `deleteWebhook` removes a webhook and its delivery
+history for good.
+
+Also in Rewloy 1.2.0 (library 0.2.4): `createApiKey(['body' => ['kind' => 'pos', 'locationId' => …, 'register' => …, 'password' => …]])`
+(a till key bound to one branch); `resetTestEnvironment(['body' => ['revokeKeys' => true]])`
+(keeps the test business, programmes and keys; revokes keys only when asked);
+`listAllBatches` (every gift-card, coupon and discount code of the business,
+with the `archived` state); `409 PROGRAM_ARCHIVED` when creating a code for an
+archived programme.
 
 ### Errors, retries, deprecations
 

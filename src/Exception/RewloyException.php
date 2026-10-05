@@ -30,8 +30,10 @@ class RewloyException extends RuntimeException
      * @param string $detail What happened, in the API's words (`error.message`).
      * @param string|null $title The code's one-line title in the catalogue, e.g. "Bakiye yetersiz".
      * @param mixed $details The API's `error.details`, when it sent any: for `VALIDATION` a list
-     *                       of `['field' => …, 'rule' => …, 'message' => …]`, for others what the
-     *                       catalogue says (`left`, `channels`, `request`…).
+     *                       of `['field' => …, 'rule' => …, 'message' => …, 'reason' => …]` (`reason`,
+     *                       optional, says which limit a rule hit; for `occurredAt`: `in_future`,
+     *                       `too_old`, `before_issue` or `invalid`, an unknown one counts as `invalid`),
+     *                       for others what the catalogue says (`left`, `channels`, `request`…).
      * @param string|null $docs Where the catalogue explains the code (`error.docs`).
      * @param string|null $requestId `x-request-id`: quote it to Rewloy support.
      * @param mixed $body The parsed answer body (or its text, when it is not JSON).

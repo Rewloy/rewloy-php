@@ -516,9 +516,23 @@ final class Generator
     }
 
     /** No required property at the top level: `{}` is a valid body. */
+    /**
+     * No required property at the top level: `{}` is a valid body. A union (`oneOf` / `anyOf`) takes `{}` when any of
+     * its shapes does; one whose shapes all require something (createApiKey's two key shapes) does not.
+     */
     private static function requiredFree(mixed $schema): bool
     {
-        return self::listOf(self::obj($schema)['required'] ?? null) === [];
+        $obj = self::obj($schema);
+        $shapes = self::listOf($obj['oneOf'] ?? $obj['anyOf'] ?? null);
+        if ($shapes !== []) {
+            foreach ($shapes as $shape) {
+                if (self::requiredFree($shape)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return self::listOf($obj['required'] ?? null) === [];
     }
 
     /* ------------------------------------------------------------ files */
@@ -815,7 +829,12 @@ final class Generator
     private static function operationsFile(string $version, array $ops): string
     {
         $in = self::INDENT;
+        // PHPStan keeps a constant array's exact shape only up to 256 entries (the API passed 256 in 1.2.0);
+        // past that it infers a general array and `get()` no longer type-checks. So the table is written as
+        // parts of at most 200 rows, and `get()` looks in each.
+        $chunks = [];
         $rows = '';
+        $count = 0;
         foreach ($ops as $op) {
             $fields = [
                 "'method' => " . self::php($op['method']),
@@ -834,6 +853,28 @@ final class Generator
                     : 'null'),
             ];
             $rows .= $in . $in . self::php($op['id']) . ' => [' . implode(', ', $fields) . "],\n";
+            if (++$count % 200 === 0) {
+                $chunks[] = $rows;
+                $rows = '';
+            }
+        }
+        if ($rows !== '' || $chunks === []) {
+            $chunks[] = $rows;
+        }
+        $names = array_map(static fn (int $i): string => 'self::PART_' . ($i + 1), array_keys($chunks));
+        $tables = '';
+        if (count($chunks) === 1) {
+            $tables = self::doc([], $in, ['@var array<string, OperationMeta>'])
+                . $in . "public const ALL = [\n" . $chunks[0] . $in . "];\n\n";
+            $lookup = 'self::ALL[$operation] ?? null';
+        } else {
+            foreach ($chunks as $i => $chunk) {
+                $tables .= self::doc([], $in, ['@var array<string, OperationMeta>'])
+                    . $in . 'private const PART_' . ($i + 1) . " = [\n" . $chunk . $in . "];\n\n";
+            }
+            $tables .= self::doc(['Every operation, by operationId.'], $in, ['@var array<string, OperationMeta>'])
+                . $in . 'public const ALL = ' . implode(' + ', $names) . ";\n\n";
+            $lookup = implode(' ?? ', array_map(static fn (string $n): string => $n . '[$operation]', $names)) . ' ?? null';
         }
         return self::header($version) . "\n"
             . self::doc([
@@ -860,12 +901,11 @@ final class Generator
             . "final class Operations\n{\n"
             . self::doc(['The version of the API document this was generated from (`info.version`).'], $in)
             . $in . 'public const API_VERSION = ' . self::php($version) . ";\n\n"
-            . self::doc([], $in, ['@var array<string, OperationMeta>'])
-            . $in . "public const ALL = [\n" . $rows . $in . "];\n\n"
+            . $tables
             . self::doc(["An operation's row, or null for an unknown operationId."], $in, ['@return OperationMeta|null'])
             . $in . "public static function get(string \$operation): ?array\n"
             . $in . "{\n"
-            . $in . $in . "return self::ALL[\$operation] ?? null;\n"
+            . $in . $in . 'return ' . $lookup . ";\n"
             . $in . "}\n\n"
             . $in . "private function __construct()\n"
             . $in . "{\n"
