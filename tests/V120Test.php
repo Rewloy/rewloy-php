@@ -19,6 +19,29 @@ final class V120Test extends TestCase
 {
     private const WEBHOOK = '0192f7c1-0000-7000-8000-0000000000aa';
 
+    /**
+     * A webhook object as 1.2.0 answers: pausedUntil and resumableUntil are always present.
+     *
+     * @return array<string, mixed>
+     */
+    private static function webhookRow(?string $pausedUntil, ?string $resumableUntil): array
+    {
+        return [
+            'id' => self::WEBHOOK,
+            'url' => 'https://ornek.com/rewloy/webhook',
+            'events' => ['pass.activity'],
+            'status' => 'active',
+            'failures' => 0,
+            'disabledReason' => null,
+            'createdAt' => '2026-10-06T09:00:00.000Z',
+            'week' => ['delivered' => 3, 'failed' => 0, 'pending' => 1],
+            'lastDelivered' => '2026-10-06T09:30:00.000Z',
+            'createdByKey' => null,
+            'pausedUntil' => $pausedUntil,
+            'resumableUntil' => $resumableUntil,
+        ];
+    }
+
     private StubTransport $stub;
 
     protected function setUp(): void
@@ -30,6 +53,17 @@ final class V120Test extends TestCase
                     'data' => [['id' => 'o1', 'kind' => 'earn', 'delta' => 1, 'unit' => 'stamp', 'saleKey' => 'kasa3-z0187-fis0042', 'undoWith' => 'sale/reverse', 'reversible' => true, 'byCaller' => true]],
                     'meta' => ['page' => 1, 'pageSize' => 50, 'total' => 1],
                 ]);
+            }
+            if (preg_match('#^/v1/batches/(b-[a-z]+)/send$#', $path, $m) === 1) {
+                $refusals = ['b-closed' => [410, 'BATCH_CLOSED'], 'b-expired' => [410, 'BATCH_EXPIRED'], 'b-full' => [410, 'BATCH_FULL'], 'b-archived' => [409, 'PROGRAM_ARCHIVED']];
+                [$status, $code] = $refusals[$m[1]] ?? [500, 'INTERNAL'];
+                return Api::json($status, Api::error($code, $status, $code));
+            }
+            if ($path === '/v1/developers/webhooks' && $req->method === 'GET') {
+                return Api::json(200, ['data' => [self::webhookRow('2026-10-06T10:01:00.000Z', null), self::webhookRow(null, '2026-10-07T09:45:00.000Z')]]);
+            }
+            if ($path === '/v1/developers/webhooks/' . self::WEBHOOK && $req->method === 'PATCH') {
+                return Api::json(200, ['data' => self::webhookRow(null, null)]);
             }
             if (str_starts_with($path, '/v1/batches')) {
                 return Api::json(200, ['data' => [['id' => 'b1', 'status' => 'open', 'state' => 'archived']], 'meta' => ['page' => 1, 'pageSize' => 50, 'total' => 1]]);
@@ -125,6 +159,43 @@ final class V120Test extends TestCase
         } catch (RewloyException $e) {
             self::assertSame(409, $e->status);
             self::assertSame(ErrorCode::PROGRAM_ARCHIVED, $e->errorCode);
+        }
+    }
+
+    public function testReadsTheWebhookStateFieldsADateTimeOrNull(): void
+    {
+        $rows = $this->client()->listWebhooks();
+        $paused = $rows[0] ?? null;
+        $resumable = $rows[1] ?? null;
+        self::assertIsArray($paused);
+        self::assertIsArray($resumable);
+        self::assertSame('2026-10-06T10:01:00.000Z', $paused['pausedUntil']);
+        self::assertNull($paused['resumableUntil']);
+        self::assertNull($resumable['pausedUntil']);
+        self::assertSame('2026-10-07T09:45:00.000Z', $resumable['resumableUntil']);
+
+        $turnedOn = $this->client()->setWebhookStatus(['params' => ['id' => self::WEBHOOK], 'body' => ['active' => true]]);
+        self::assertNull($turnedOn['pausedUntil']);
+        self::assertNull($turnedOn['resumableUntil']);
+        self::assertSame('PATCH', $this->stub->last()->method);
+    }
+
+    public function testSurfacesWhatSendBatchLinkRefuses(): void
+    {
+        $expected = [
+            'b-closed' => [410, ErrorCode::BATCH_CLOSED],
+            'b-expired' => [410, ErrorCode::BATCH_EXPIRED],
+            'b-full' => [410, ErrorCode::BATCH_FULL],
+            'b-archived' => [409, ErrorCode::PROGRAM_ARCHIVED],
+        ];
+        foreach ($expected as $batch => [$status, $code]) {
+            try {
+                $this->client()->sendBatchLink(['params' => ['id' => $batch], 'body' => ['email' => 'ali@ornek.com']]);
+                self::fail("accepted $batch");
+            } catch (RewloyException $e) {
+                self::assertSame($status, $e->status, $code);
+                self::assertSame($code, $e->errorCode);
+            }
         }
     }
 }

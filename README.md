@@ -510,6 +510,25 @@ denenir ve her deneme yeni bir `t` ile imzalanır. Yeni olay türleri gelebilir:
 `type`'a göre seçerken bir varsayılan dal bırakın. Kendi işleyicinizi test
 etmek için `Webhook::sign($govde, $sir)` aynı başlığı üretir.
 
+**Webhook'un durumu.** Webhook nesnesinde (`listWebhooks`, `getWebhook`,
+`setWebhookStatus`, `createWebhook` ve `rotateWebhookSecret`'ın webhook'u)
+iki tarih alanı hep vardır, ikisi de boş olabilir (`string|null`, bir tarih):
+- `pausedUntil`: alıcınız art arda iki kez `5xx`, `429` verdi ya da yanıt vermedi;
+  açık webhook'un teslimleri bu ana kadar bekler, sonra kendiliğinden yeniden
+  denenir (60 saniye). Bekletilmiyorsa ya da webhook kapalıysa boştur.
+- `resumableUntil`: webhook'u **kurallar** kapattı ve bekleyen teslimleri
+  saklanıyor (kapanıştan 24 saat sonrasına kadar). Bu andan önce
+  `setWebhookStatus(['params' => ['id' => $id], 'body' => ['active' => true]])` ile
+  açarsanız kaldığı yerden devam eder: saklananlar hemen gider, kapalıyken olan
+  olaylar da gelir. Açıksa, bir kişi ya da anahtar kapattıysa ya da süre geçtiyse boştur.
+
+```php
+foreach ($rewloy->listWebhooks() as $w) {
+    if ($w['pausedUntil'] !== null) echo "{$w['url']}: {$w['pausedUntil']} anına kadar bekletiliyor\n";
+    if ($w['resumableUntil'] !== null) echo "{$w['url']}: {$w['resumableUntil']} öncesinde açın, kaldığı yerden sürer\n";
+}
+```
+
 ## Hatalar ve yeniden deneme
 
 ```php
@@ -643,6 +662,11 @@ $yanit->mode;   // 'test'
   sayfalar (`status`: `open`, `full`, `expired`, `closed` ya da `archived`: kodun
   programı arşivde, bağlantısı kart vermez). Arşivdeki bir programa kod
   oluşturmak `409 PROGRAM_ARCHIVED` verir.
+- `sendBatchLink` kodun bağlantısını yalnız kod kart verirken e-postayla
+  gönderir: durdurulmuş kod `410 BATCH_CLOSED`, süresi dolmuş `410 BATCH_EXPIRED`,
+  kartları bitmiş `410 BATCH_FULL`, programı arşivde olan `409 PROGRAM_ARCHIVED`
+  verir ve e-posta gitmez (1.2.0'dan önce son üçünde de giderdi). Kodları
+  `Rewloy\Generated\ErrorCode` sabitleri (`ErrorCode::BATCH_FULL`…) içindedir.
 
 Ayrıntı: https://rewloy.com/gelistiriciler#test-ortamı
 
@@ -866,12 +890,32 @@ two `v1` values and the delivery has `Rewloy-Signature-Rotating: 1`.
 `[$newSecret, $oldSecret]`. `deleteWebhook` removes a webhook and its delivery
 history for good.
 
+A webhook object (`listWebhooks`, `getWebhook`, `setWebhookStatus`, and the
+`webhook` of `createWebhook` and `rotateWebhookSecret`) always carries two
+fields, each `string|null` (a date-time), null when it does not apply:
+
+- `pausedUntil`: your receiver failed twice in a row (`5xx`, `429`, a connection
+  error or no answer), so the open webhook's deliveries wait until this moment
+  and are then retried on their own (60 seconds). Null when it is not paused
+  or the webhook is off.
+- `resumableUntil`: the **rules** turned the webhook off and its pending
+  deliveries are kept (until 24 hours after it closed). Turn it on before this
+  moment (`setWebhookStatus(['params' => ['id' => $id], 'body' => ['active' => true]])`) and it
+  carries on where it stopped: the kept deliveries go at once and the events
+  that happened meanwhile arrive too. Null while it is on, when a person or a
+  key turned it off, or once the time has passed.
+
 Also in Rewloy 1.2.0 (library 0.2.4): `createApiKey(['body' => ['kind' => 'pos', 'locationId' => …, 'register' => …, 'password' => …]])`
 (a till key bound to one branch); `resetTestEnvironment(['body' => ['revokeKeys' => true]])`
 (keeps the test business, programmes and keys; revokes keys only when asked);
 `listAllBatches` (every gift-card, coupon and discount code of the business,
 with the `archived` state); `409 PROGRAM_ARCHIVED` when creating a code for an
 archived programme.
+`sendBatchLink` e-mails a code's link only while the code issues a card:
+`410 BATCH_CLOSED` (stopped), `410 BATCH_EXPIRED` (past its date),
+`410 BATCH_FULL` (every card given) and `409 PROGRAM_ARCHIVED` (its programme is
+archived) refuse it and no mail goes; before 1.2.0 the last three were sent
+anyway. The codes are in the `Rewloy\Generated\ErrorCode` constants (`ErrorCode::BATCH_FULL`…).
 
 ### Errors, retries, deprecations
 

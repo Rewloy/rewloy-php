@@ -4696,7 +4696,7 @@ trait Methods
     /**
      * Bağlantıyı e-postayla gönder
      *
-     * Kodun alma bağlantısını bir adrese gönderir; alıcı kartını kendisi alır (e-postası ve onayıyla). Sonuç: `queued` gönderildi, `duplicate` bu adrese bu kod zaten gönderilmişti, `suppressed` adres e-posta almayı reddetmiş ya da geri dönmüş. İşletme başına günde 300.
+     * Kodun alma bağlantısını bir adrese gönderir; alıcı kartını kendisi alır (e-postası ve onayıyla). Sonuç: `queued` gönderildi, `duplicate` bu adrese bu kod zaten gönderilmişti, `suppressed` adres e-posta almayı reddetmiş ya da geri dönmüş. İşletme başına günde 300. Bağlantı yalnız kart verirken gönderilir: kod durdurulduysa `BATCH_CLOSED`, süresi dolduysa `BATCH_EXPIRED`, kartları bittiyse `BATCH_FULL`, kodun programı arşivdeyse `409 PROGRAM_ARCHIVED` (1.2.0'dan önce bu durumlarda da gönderilirdi).
      *
      * **Kimlik:** API anahtarı, ekip oturumu.
      *
@@ -12479,6 +12479,8 @@ trait Methods
      *     week: array{delivered: int, failed: int, pending: int},
      *     lastDelivered: string|null,
      *     createdByKey: array{id: string, name: string}|null,
+     *     pausedUntil: string|null,
+     *     resumableUntil: string|null,
      * }>
      *
      * @throws RewloyException
@@ -12497,6 +12499,8 @@ trait Methods
          *     week: array{delivered: int, failed: int, pending: int},
          *     lastDelivered: string|null,
          *     createdByKey: array{id: string, name: string}|null,
+         *     pausedUntil: string|null,
+         *     resumableUntil: string|null,
          * }> $data
          */
         $data = $this->call('listWebhooks', $args);
@@ -12543,6 +12547,8 @@ trait Methods
      *         week: array{delivered: int, failed: int, pending: int},
      *         lastDelivered: string|null,
      *         createdByKey: array{id: string, name: string}|null,
+     *         pausedUntil: string|null,
+     *         resumableUntil: string|null,
      *     },
      *     secret: string,
      *     warnings?: list<string>,
@@ -12565,6 +12571,8 @@ trait Methods
          *         week: array{delivered: int, failed: int, pending: int},
          *         lastDelivered: string|null,
          *         createdByKey: array{id: string, name: string}|null,
+         *         pausedUntil: string|null,
+         *         resumableUntil: string|null,
          *     },
          *     secret: string,
          *     warnings?: list<string>,
@@ -12605,6 +12613,8 @@ trait Methods
      *     week: array{delivered: int, failed: int, pending: int},
      *     lastDelivered: string|null,
      *     createdByKey: array{id: string, name: string}|null,
+     *     pausedUntil: string|null,
+     *     resumableUntil: string|null,
      * }
      *
      * @throws RewloyException
@@ -12623,6 +12633,8 @@ trait Methods
          *     week: array{delivered: int, failed: int, pending: int},
          *     lastDelivered: string|null,
          *     createdByKey: array{id: string, name: string}|null,
+         *     pausedUntil: string|null,
+         *     resumableUntil: string|null,
          * } $data
          */
         $data = $this->call('getWebhook', $args);
@@ -12663,6 +12675,8 @@ trait Methods
      *     week: array{delivered: int, failed: int, pending: int},
      *     lastDelivered: string|null,
      *     createdByKey: array{id: string, name: string}|null,
+     *     pausedUntil: string|null,
+     *     resumableUntil: string|null,
      * }
      *
      * @throws RewloyException
@@ -12681,6 +12695,8 @@ trait Methods
          *     week: array{delivered: int, failed: int, pending: int},
          *     lastDelivered: string|null,
          *     createdByKey: array{id: string, name: string}|null,
+         *     pausedUntil: string|null,
+         *     resumableUntil: string|null,
          * } $data
          */
         $data = $this->call('setWebhookStatus', $args);
@@ -12856,6 +12872,8 @@ trait Methods
      *         week: array{delivered: int, failed: int, pending: int},
      *         lastDelivered: string|null,
      *         createdByKey: array{id: string, name: string}|null,
+     *         pausedUntil: string|null,
+     *         resumableUntil: string|null,
      *     },
      *     secret: string,
      *     previousValidUntil: string,
@@ -12878,6 +12896,8 @@ trait Methods
          *         week: array{delivered: int, failed: int, pending: int},
          *         lastDelivered: string|null,
          *         createdByKey: array{id: string, name: string}|null,
+         *         pausedUntil: string|null,
+         *         resumableUntil: string|null,
          *     },
          *     secret: string,
          *     previousValidUntil: string,
