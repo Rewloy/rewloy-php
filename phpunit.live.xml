@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The live tests: the library against a running DEV Rewloy (composer live).
+  Not part of the normal run (phpunit.xml.dist leaves tests/Live out). See README, "Canlı testler / Live tests".
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/Live/bootstrap.php"
+         cacheDirectory="build/phpunit-live"
+         colors="true"
+         executionOrder="default"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true"
+         failOnNotice="true"
+         failOnDeprecation="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         displayDetailsOnTestsThatTriggerNotices="true">
+    <extensions>
+        <bootstrap class="Rewloy\Tests\Live\LiveExtension"/>
+    </extensions>
+    <testsuites>
+        <testsuite name="live">
+            <!-- In this order; the reset goes last. -->
+            <file>tests/Live/MetaTest.php</file>
+            <file>tests/Live/ProgramsTest.php</file>
+            <file>tests/Live/PassesTest.php</file>
+            <file>tests/Live/SalesTest.php</file>
+            <file>tests/Live/CustomersTest.php</file>
+            <file>tests/Live/BatchesTest.php</file>
+            <file>tests/Live/WebhooksTest.php</file>
+            <file>tests/Live/IdempotencyTest.php</file>
+            <file>tests/Live/RateLimitTest.php</file>
+            <file>tests/Live/ErrorsTest.php</file>
+            <file>tests/Live/PaginationTest.php</file>
+            <file>tests/Live/ZResetTest.php</file>
+        </testsuite>
+    </testsuites>
+</phpunit>

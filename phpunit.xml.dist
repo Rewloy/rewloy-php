@@ -18,6 +18,8 @@
     <testsuites>
         <testsuite name="rewloy-php">
             <directory>tests</directory>
+            <!-- The live tests need a dev server: phpunit.live.xml (composer live). -->
+            <exclude>tests/Live</exclude>
         </testsuite>
     </testsuites>
     <source>

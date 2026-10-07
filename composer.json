@@ -49,8 +49,12 @@
     },
     "scripts": {
         "generate": "@php scripts/generate.php",
-        "analyse": "phpstan analyse --no-progress",
+        "analyse": [
+            "phpstan analyse --no-progress",
+            "phpstan analyse --no-progress -c phpstan.live.neon"
+        ],
         "test": "phpunit",
+        "live": "phpunit -c phpunit.live.xml",
         "check": [
             "@analyse",
             "@test"
@@ -60,6 +64,7 @@
         "generate": "Regenerate src/Generated/ from the live OpenAPI document (or --file openapi/openapi.json)",
         "analyse": "PHPStan at the configured level",
         "test": "PHPUnit (no network)",
+        "live": "The live tests against a dev Rewloy (REWLOY_BASE_URL, REWLOY_API_KEY): tests/Live",
         "check": "PHPStan, then PHPUnit"
     },
     "config": {

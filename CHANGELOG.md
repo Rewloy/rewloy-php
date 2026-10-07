@@ -5,6 +5,14 @@ https://rewloy.com/gelistiriciler/degisiklikler
 
 This library's releases. The API's own changes are listed at the link above.
 
+## Yayımlanmamış / Unreleased
+
+`tests/Live` ve `composer live`: kütüphaneyi çalışan bir dev Rewloy'una karşı sınayan
+canlı testler (README, "Canlı testler"). Kütüphanenin kendisi değişmedi.
+
+The live tests (`tests/Live`, `composer live`) exercise the library against a running dev
+Rewloy (README, "Live tests"). The library itself is unchanged.
+
 ## 0.2.4 (2026-10-06)
 
 Rewloy API 1.2.0'ı izler (API sürümü, `info.version`): 260 işlem (0.2.2'de 256),

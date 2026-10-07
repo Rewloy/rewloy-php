@@ -1,0 +1,12 @@
+# PHPStan for the live tests (tests/Live). They assert what a running server answers, so the
+# generated array shapes must not be taken as certain (phpstan.neon.dist, at max, does that for
+# everything else): level 6 with PHPDoc types uncertain still catches wrong calls and bad arguments.
+parameters:
+    level: 6
+    paths:
+        - tests/Live
+    tmpDir: build/phpstan-live
+    treatPhpDocTypesAsCertain: false
+    checkUninitializedProperties: true
+    additionalConstructors:
+        - PHPUnit\Framework\TestCase::setUp

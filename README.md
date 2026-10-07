@@ -704,6 +704,35 @@ composer check                                      # PHPStan (max), sonra PHPUn
 - CI her gün canlı belgeyi okur ve bir değişiklik varsa bir pull request açar.
 - Kararlar: [docs/DECISIONS.md](docs/DECISIONS.md).
 
+### Canlı testler
+
+`tests/Live`, kütüphaneyi çalışan bir **geliştirme (dev) Rewloy**'una karşı uçtan uca sınar:
+bir sürüm adayı canlıya çıkmadan önce her istemci kütüphanesi bu testten geçer.
+Normal `composer test` bunları çalıştırmaz.
+
+```sh
+REWLOY_BASE_URL=https://dev.ornek.com REWLOY_API_KEY=rwk_test_… composer live
+```
+
+| Değişken | Anlamı |
+|---|---|
+| `REWLOY_BASE_URL` | Dev sunucusunun adresi. Biri eksikse testler **atlanır** (hata değildir). |
+| `REWLOY_API_KEY` | Test ortamının anahtarı: `rwk_test_…`. Başka her anahtar reddedilir. |
+| `REWLOY_STAFF_SESSION` ya da `REWLOY_STAFF_EMAIL` + `REWLOY_STAFF_PASSWORD` | İsteğe bağlı: test ortamında koltuğu olan birinin ekip oturumu (ikinci faktörsüz). `resetTestEnvironment` API anahtarıyla çalışmaz, ekip oturumu ister; yoksa sıfırlama atlanır ve özet bunu söyler. |
+| `REWLOY_WEBHOOK_URL` | İsteğe bağlı: webhook testi için herkese açık bir https adresi (yalnız sunucu çözülemeyen adresi reddederse kullanılır; varsayılan `https://example.com/rewloy-live-tests`). |
+
+Önce `GET /v1/meta` sorulur (anahtar gönderilmeden); `environment` `"dev"` değilse
+ya da alan yoksa hiçbir şey çalışmaz (çıkış kodu 2). Canlıya karşı çalışmaz.
+Kapsam: meta ve işletme; programlar (damga ve hediye kartı, güncelle, arşivle, sil);
+kart verme, kasa görünümü, damga/ödül/harcama; satış (fiş numarasıyla ve numarasız),
+`reverseSale`, `reverseAction`, işlem listesi; müşteri araması; kodlar
+(`listAllBatches`, gönderme ve reddedilme durumları); webhook (oluştur, listele, sırrı
+yenile, sil); `Idempotency-Key`; istek sınırı başlıkları; hata nesnesi (404 ve
+doğrulama); sayfalama; en sonda test ortamının sıfırlanması. Özet, alan başına
+geçen/kalan sayısını yazar; herhangi bir hatada çıkış kodu sıfırdan farklıdır.
+Test ortamı günde en fazla 5 kez sıfırlanır. Yapılmayanlar (API 1.3'ün işlemleri):
+[tests/Live/TODO.md](tests/Live/TODO.md).
+
 ## Belgeler
 
 | | |
@@ -932,6 +961,34 @@ anyway. The codes are in the `Rewloy\Generated\ErrorCode` constants (`ErrorCode:
 - **Deprecations.** A deprecated operation's answers carry `Deprecation`,
   `Sunset` and `Link`. The client raises one `E_USER_DEPRECATED` per
   operation per process, and the generated method is marked `@deprecated`.
+
+### Live tests
+
+`tests/Live` tests the library end to end against a running **dev Rewloy**: a release
+candidate passes every client library's live suite before it goes live. The normal
+`composer test` does not run them.
+
+```sh
+REWLOY_BASE_URL=https://dev.example.com REWLOY_API_KEY=rwk_test_… composer live
+```
+
+- `REWLOY_BASE_URL`, `REWLOY_API_KEY`: the dev server and the test business's key
+  (`rwk_test_…`; any other key is refused). If either is missing the tests **skip**.
+- Optional: `REWLOY_STAFF_SESSION`, or `REWLOY_STAFF_EMAIL` and `REWLOY_STAFF_PASSWORD`
+  (a team session with a seat in the test business, no second factor). `resetTestEnvironment`
+  refuses an API key, so without a session the reset is skipped and the summary says so.
+  `REWLOY_WEBHOOK_URL`: a public https address for the webhook tests, used only if the
+  server refuses the unresolvable one (default `https://example.com/rewloy-live-tests`).
+- It first asks `GET /v1/meta` (no key is sent) and stops with exit code 2 unless
+  `environment` is `"dev"`. It never runs against live.
+- Covers: meta and business; programs (stamp and gift card; update, archive, delete);
+  issuing, the till view, stamp, redeem and spend; sales with and without a receipt
+  reference, `reverseSale`, `reverseAction`, the operations list; customer search;
+  codes (`listAllBatches`, send-link refusals); webhooks (create, list, rotate the
+  secret, delete); `Idempotency-Key`; rate-limit headers; the error object (404 and
+  validation); pagination; and last the test reset. It prints passed/failed per area
+  and exits non-zero on any failure. A test business resets at most 5 times a day.
+  What is not covered yet (API 1.3 operations): [tests/Live/TODO.md](tests/Live/TODO.md).
 
 ### Security and licence
 
