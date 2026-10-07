@@ -45,7 +45,7 @@ class Client
     use Methods;
 
     /** This library's version (the latest in CHANGELOG.md; a test keeps them equal). */
-    public const VERSION = '0.2.4';
+    public const VERSION = '0.3.0';
     public const DEFAULT_BASE_URL = 'https://app.rewloy.com';
     /** Seconds allowed for one attempt. */
     public const DEFAULT_TIMEOUT = 60.0;

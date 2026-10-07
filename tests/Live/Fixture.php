@@ -36,6 +36,21 @@ final class Fixture
     /** @var list<string> */
     private static array $batches = [];
 
+    /** @var list<string> */
+    private static array $groups = [];
+
+    /** @var list<string> programs that got earn rules */
+    private static array $ruled = [];
+
+    /** @var list<string> branches this run made */
+    private static array $locations = [];
+
+    private static ?Client $staff = null;
+
+    private static ?string $staffError = null;
+
+    private static bool $staffResolved = false;
+
     private function __construct()
     {
     }
@@ -145,6 +160,82 @@ final class Fixture
         self::$batches[] = $id;
     }
 
+    /** A program the run made some other way (a copy): cleaned up with the rest. */
+    public static function adopt(string $id, string $name): void
+    {
+        self::$programs[$id] = $name;
+    }
+
+    public static function trackGroup(string $id): void
+    {
+        self::$groups[] = $id;
+    }
+
+    /** A program whose earn rules the run saved: they are deleted at the end so its groups can go. */
+    public static function trackRules(string $programId): void
+    {
+        self::$ruled[] = $programId;
+    }
+
+    public static function trackLocation(string $id): void
+    {
+        self::$locations[] = $id;
+    }
+
+    /** A branch the run made: archived at the end (a branch cannot be deleted). */
+    public static function newLocation(string $label): string
+    {
+        $location = self::client()->createLocation(['body' => ['name' => sprintf('Live %s %s', $label, self::run())]]);
+        self::$locations[] = $location['id'];
+        return $location['id'];
+    }
+
+    /**
+     * A team session in the test business, or null (the reason is in staffError()). REWLOY_STAFF_SESSION
+     * (an rws_ token), or REWLOY_STAFF_EMAIL and REWLOY_STAFF_PASSWORD (a login without a second factor).
+     */
+    public static function staff(): ?Client
+    {
+        if (!self::$staffResolved) {
+            self::$staffResolved = true;
+            self::$staff = self::openStaffSession();
+        }
+        return self::$staff;
+    }
+
+    public static function staffError(): string
+    {
+        return self::$staffError ?? 'no team session given';
+    }
+
+    /** The team member's password (REWLOY_STAFF_PASSWORD), which a step-up action such as freezing a branch asks for. */
+    public static function staffPassword(): ?string
+    {
+        $password = (string) getenv('REWLOY_STAFF_PASSWORD');
+        return $password === '' ? null : $password;
+    }
+
+    private static function openStaffSession(): ?Client
+    {
+        $merchant = self::client()->getBusiness()['id'];
+        $token = trim((string) getenv('REWLOY_STAFF_SESSION'));
+        if ($token === '') {
+            $email = trim((string) getenv('REWLOY_STAFF_EMAIL'));
+            $password = (string) getenv('REWLOY_STAFF_PASSWORD');
+            if ($email === '' || $password === '') {
+                self::$staffError = 'needs a team session: set REWLOY_STAFF_SESSION, or REWLOY_STAFF_EMAIL and REWLOY_STAFF_PASSWORD';
+                return null;
+            }
+            $login = (new Client(baseUrl: Guard::$baseUrl))->login(['body' => ['email' => $email, 'password' => $password]]);
+            if ($login['mfaRequired']) {
+                self::$staffError = 'the staff login asks for a second factor: give REWLOY_STAFF_SESSION of a proven session instead';
+                return null;
+            }
+            $token = $login['token'];
+        }
+        return new Client(staffSession: $token, merchant: $merchant, baseUrl: Guard::$baseUrl, userAgent: 'rewloy-php-live-tests');
+    }
+
     public static function forgetProgram(string $id): void
     {
         unset(self::$programs[$id]);
@@ -161,6 +252,14 @@ final class Fixture
             return;
         }
         $client = self::client();
+        foreach (self::$ruled as $id) {
+            self::quietly(static fn () => $client->deleteEarnRules(['params' => ['id' => $id]]));
+        }
+        self::$ruled = [];
+        foreach (self::$groups as $id) {
+            self::quietly(static fn () => $client->deleteEarnGroup(['params' => ['id' => $id]]));
+        }
+        self::$groups = [];
         foreach (self::$webhooks as $id) {
             self::quietly(static fn () => $client->deleteWebhook(['params' => ['id' => $id]]));
         }
@@ -176,6 +275,10 @@ final class Fixture
             }
         }
         self::$programs = [];
+        foreach (self::$locations as $id) {
+            self::quietly(static fn () => $client->archiveLocation(['params' => ['id' => $id]]));
+        }
+        self::$locations = [];
     }
 
     /** @param callable(): mixed $call */

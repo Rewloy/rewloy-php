@@ -286,6 +286,86 @@ foreach ($rewloy->paginate('listPassOperations', ['params' => ['serial' => $seri
 eski), `before_issue` (kart o anda yoktu: `occurredAt` olmadan yeniden
 gönderin), `invalid`. Tanımadığınız bir `reason`'ı `invalid` gibi ele alın.
 
+### Fiş satırları ve kazanım kuralları (API 1.3)
+
+`recordSale` fişin satırlarını da alabilir (`lines`, en çok 500: `lineId`, `name`,
+`sku`, `category` bir metin ya da yol, `quantity` üç ondalıkla, `unit`,
+`unitPriceMinor`, `discountMinor`, `totalMinor`, `kind`, `tags`; fiş indirimi
+`receiptDiscountMinor`). İşletmenin kuralı yoksa kazanım eskisi gibidir. Kural varsa
+yanıt `earn` taşır: her satırın durumu (`earned`, `no_rule`, `excluded`,
+`below_unit_price`, `refunded`…), hangi gruplarda ve hangi kuralda olduğu ve toplam,
+adım adım (sınırlar, kampanya, `credited`). Satırların toplamı ödenenle tutmazsa
+`422 LINES_TOTAL_MISMATCH`, 500'den fazlaysa `422 TOO_MANY_LINES`.
+
+```php
+$satirlar = [
+    ['lineId' => 'l1', 'name' => 'Latte', 'category' => ['Kahve', 'Sıcak'], 'quantity' => 2, 'unitPriceMinor' => 9000, 'totalMinor' => 18000],
+    ['lineId' => 'l2', 'name' => 'Su', 'category' => 'Su', 'quantity' => 1, 'unitPriceMinor' => 2000, 'totalMinor' => 2000],
+];
+
+// Yazmadan dene: kartı ve defteri değiştirmez, Idempotency-Key istemez.
+$onizleme = $rewloy->previewSale(['params' => ['serial' => $seri], 'body' => ['amountMinor' => 20000, 'lines' => $satirlar]]);
+// Kart olmadan da sorulabilir (bir taslak kural kümesiyle): previewEarn.
+$rewloy->previewEarn(['params' => ['id' => $programId], 'body' => ['amountMinor' => 20000, 'lines' => $satirlar]]);
+
+$satis = $rewloy->recordSale([
+    'params' => ['serial' => $seri],
+    'body' => ['locationId' => $subeId, 'amountMinor' => 20000, 'lines' => $satirlar],
+    'idempotencyKey' => $anahtar,
+]);
+foreach ($satis['earn']['lines'] ?? [] as $satir) {
+    echo $satir['lineId'], ': ', $satir['status'], ' ', $satir['earned'], "\n";
+}
+
+// Tek bir satırın iadesi: satış bu satırsız yeniden yargılanır, yalnız fark geri alınır.
+$iade = $rewloy->reverseSale([
+    'params' => ['serial' => $seri],
+    'body' => ['saleKey' => $anahtar, 'lines' => [['lineId' => 'l1', 'quantity' => 1]]],
+    'idempotencyKey' => $anahtar . '-iade1',
+]);
+echo $iade['balance'], ' ', json_encode($iade['linesLeft'] ?? []), "\n";
+```
+
+`LINE_NOT_FOUND` (satışta öyle bir satır yok) ve `LINE_ALREADY_REFUNDED` yalnız
+satırla iadede gelir. Ürün grupları (`createEarnGroup`, `listEarnGroups`…, bir
+grup kategorilerden, SKU'lardan, adlardan ya da etiketlerden kurulur) ve bir
+programın kuralları (`getEarnRules`, `putEarnRules` ve tek kural işlemleri;
+her kayıt bir sürümdür ve `revision` ile karşılaştırılıp yazılır:
+`409 REVISION_CONFLICT`) de API'dedir. Kuralları denemek için ayrıca
+`listEarnTemplates`.
+
+### Şube QR'ı ve şube dondurma (API 1.3)
+
+Her şubenin kalıcı bir QR'ı vardır (`listLocations` ve `getLocation`'da `qr`:
+`code`, `url`, `state`). `publicBranch` o sayfanın verisini kimlik göndermeden
+okur; QR'ın kendisi ve basılacak sayfalar bayt dizisi olarak gelir:
+
+```php
+$sube = $rewloy->getLocation(['params' => ['id' => $subeId]]);
+$sayfa = $rewloy->publicBranch(['params' => ['code' => $sube['qr']['code']]]);
+echo $sayfa['branch']['state'], ' ', count($sayfa['items']), " kart\n";
+
+file_put_contents('sube-qr.png', $rewloy->locationQrPng(['params' => ['id' => $subeId], 'query' => ['size' => 1024]]));
+file_put_contents('afis-a4.pdf', $rewloy->locationQrSheetPdf(['params' => ['id' => $subeId], 'query' => ['form' => 'a4']]));
+```
+
+QR'daki kartların listesi `getLocationQrItems` / `putLocationQrItems` (listenin
+`version`ı ile; başkası değiştirmişse `409 QR_LIST_CHANGED`), `addQrItems` ve
+`previewLocationQr` ile düzenlenir. Kart sahibinin işlemleri (`holderBranch`,
+`joinHolderBranch`) Rewloy Cüzdan oturumu ister, API anahtarı değil.
+
+Şube dondurma: `freezeLocation` **ekip oturumu ve kişinin şifresi** ister (API
+anahtarı `403 CREDENTIAL_NOT_ALLOWED` alır); notu değiştirmek
+(`updateLocationFreeze`), başlamamış dondurmayı iptal etmek
+(`cancelLocationFreeze`) ve şubeyi açmak (`unfreezeLocation`) `locations.freeze`
+yetkili anahtarla da olur. Donuk şubenin kasası `409 LOCATION_FROZEN` der; her
+şubesi donuk olan işletme `409 BUSINESS_FROZEN` der. Ücretsiz gün hakkı
+`listLocationFreezes`'ta. Yeni webhook olayları: `pass.extended`, `location.frozen`,
+`location.unfrozen`, `business.paused`, `business.resumed`.
+
+`copyProgram` yalnız hediye kartı, kupon ve indirim kartını kopyalar; bir
+sadakat kartı `422 NOT_AN_INSTRUMENT` alır.
+
 ### `Idempotency-Key`
 
 `recordSale`, `passAction`, `sendCampaign` ve `refundShopRedemption` bir
@@ -719,6 +799,7 @@ REWLOY_BASE_URL=https://dev.ornek.com REWLOY_API_KEY=rwk_test_… composer live
 | `REWLOY_BASE_URL` | Dev sunucusunun adresi. Biri eksikse testler **atlanır** (hata değildir). |
 | `REWLOY_API_KEY` | Test ortamının anahtarı: `rwk_test_…`. Başka her anahtar reddedilir. |
 | `REWLOY_STAFF_SESSION` ya da `REWLOY_STAFF_EMAIL` + `REWLOY_STAFF_PASSWORD` | İsteğe bağlı: test ortamında koltuğu olan birinin ekip oturumu (ikinci faktörsüz). `resetTestEnvironment` API anahtarıyla çalışmaz, ekip oturumu ister; yoksa sıfırlama atlanır ve özet bunu söyler. |
+| `REWLOY_STAFF_PASSWORD` | İsteğe bağlı: aynı kişinin şifresi. Şube dondurma (`freezeLocation`) şifre ister; yoksa dondurma testleri atlanır ve özet bunu söyler. |
 | `REWLOY_WEBHOOK_URL` | İsteğe bağlı: webhook testi için herkese açık bir https adresi (yalnız sunucu çözülemeyen adresi reddederse kullanılır; varsayılan `https://example.com/rewloy-live-tests`). |
 
 Önce `GET /v1/meta` sorulur (anahtar gönderilmeden); `environment` `"dev"` değilse
@@ -728,10 +809,15 @@ kart verme, kasa görünümü, damga/ödül/harcama; satış (fiş numarasıyla 
 `reverseSale`, `reverseAction`, işlem listesi; müşteri araması; kodlar
 (`listAllBatches`, gönderme ve reddedilme durumları); webhook (oluştur, listele, sırrı
 yenile, sil); `Idempotency-Key`; istek sınırı başlıkları; hata nesnesi (404 ve
-doğrulama); sayfalama; en sonda test ortamının sıfırlanması. Özet, alan başına
+doğrulama); sayfalama; 1.3.0'dan: ürün grupları ve kazanım kuralları (kaydetme,
+sürüm çakışması, tek kural), `previewEarn`, `previewSale`, satırlı `recordSale` ve
+`earn` açıklaması, tek satır iadesi, şube QR'ı (herkese açık sayfa, SVG, PNG, PDF
+sayfaları, liste), şube dondurma (ekip oturumu ve şifreyle; test için ayrı bir şube
+açılır, sonunda açılır), `copyProgram` ve `NOT_AN_INSTRUMENT`; en sonda test ortamının
+sıfırlanması. Özet, alan başına
 geçen/kalan sayısını yazar; herhangi bir hatada çıkış kodu sıfırdan farklıdır.
-Test ortamı günde en fazla 5 kez sıfırlanır. Yapılmayanlar (API 1.3'ün işlemleri):
-[tests/Live/TODO.md](tests/Live/TODO.md).
+Test ortamı günde en fazla 5 kez sıfırlanır. Yapılmayanlar (`BUSINESS_FROZEN`, kod
+kartlı şube QR'ı, Rewloy Cüzdan işlemleri…): [tests/Live/TODO.md](tests/Live/TODO.md).
 
 ## Belgeler
 
@@ -946,6 +1032,58 @@ archived programme.
 archived) refuse it and no mail goes; before 1.2.0 the last three were sent
 anyway. The codes are in the `Rewloy\Generated\ErrorCode` constants (`ErrorCode::BATCH_FULL`…).
 
+Also in Rewloy 1.3.0 (library 0.3.0), all additive:
+
+- **Receipt lines.** `recordSale` and the new `previewSale` (no `Idempotency-Key`,
+  nothing written) take `lines` (up to 500) and `receiptDiscountMinor`; with
+  lines the answer carries `earn`, the line-by-line explanation (`status`,
+  groups, rules, the total step by step). `previewEarn` asks the same of a
+  programme with no card, optionally against a draft `ruleSet`. A programme
+  without earn rules earns as before.
+
+  ```php
+  $lines = [
+      ['lineId' => 'l1', 'name' => 'Latte', 'category' => ['Coffee', 'Hot'], 'quantity' => 2, 'unitPriceMinor' => 9000, 'totalMinor' => 18000],
+      ['lineId' => 'l2', 'name' => 'Water', 'category' => 'Water', 'quantity' => 1, 'unitPriceMinor' => 2000, 'totalMinor' => 2000],
+  ];
+  $try = $rewloy->previewSale(['params' => ['serial' => $serial], 'body' => ['amountMinor' => 20000, 'lines' => $lines]]);
+  $sale = $rewloy->recordSale([
+      'params' => ['serial' => $serial],
+      'body' => ['locationId' => $locationId, 'amountMinor' => 20000, 'lines' => $lines],
+      'idempotencyKey' => $key,
+  ]);
+  foreach ($sale['earn']['lines'] ?? [] as $line) {
+      echo $line['lineId'], ': ', $line['status'], ' ', $line['earned'], "\n";
+  }
+  // One line comes back: the sale is judged again without it and only the difference is taken back.
+  $refund = $rewloy->reverseSale([
+      'params' => ['serial' => $serial],
+      'body' => ['saleKey' => $key, 'lines' => [['lineId' => 'l1', 'quantity' => 1]]],
+      'idempotencyKey' => $key . '-refund1',
+  ]);
+  ```
+
+  Refusals that come only with lines: `LINES_TOTAL_MISMATCH`, `LINE_AMOUNT_INVALID`,
+  `TOO_MANY_LINES`, and on a line refund `LINE_NOT_FOUND` and `LINE_ALREADY_REFUNDED`.
+- **Groups and rules.** `createEarnGroup`, `listEarnGroups`, `updateEarnGroup`…
+  (a group is the business's name for what it sells), and a programme's
+  `getEarnRules`, `putEarnRules`, `createEarnRule`, `updateEarnRule`,
+  `deleteEarnRule`, `listEarnRuleRevisions`, `listEarnTemplates`. Every save is a
+  revision written compare-and-set on `revision` (`REVISION_CONFLICT`).
+- **Branch QR.** `qr` on every branch; `publicBranch` (no credential),
+  `locationQrSvg` / `locationQrPng` / `locationQrSheetPdf` / `locationQrSheetSvg`
+  (files as strings of bytes), the list (`getLocationQrItems`, `putLocationQrItems`
+  with its `version`, `addQrItems`, `previewLocationQr`); `holderBranch` and
+  `joinHolderBranch` need a Rewloy Cüzdan session.
+- **Branch freeze.** `freezeLocation` needs a team session and the person's
+  password (an API key gets `CREDENTIAL_NOT_ALLOWED`); `updateLocationFreeze`,
+  `cancelLocationFreeze` and `unfreezeLocation` also work with a key holding
+  `locations.freeze`. A frozen branch's till answers `LOCATION_FROZEN`, a business with
+  every branch frozen `BUSINESS_FROZEN`. New webhook events `pass.extended`,
+  `location.frozen`, `location.unfrozen`, `business.paused`, `business.resumed`.
+- **Code cards.** `copyProgram` copies only a gift card, coupon or discount card
+  (`NOT_AN_INSTRUMENT` for a loyalty card), `extendProgramCards`, `updateBatch`.
+
 ### Errors, retries, deprecations
 
 - **Errors.** Failures throw `RewloyException` with `status`, `errorCode`
@@ -977,6 +1115,8 @@ REWLOY_BASE_URL=https://dev.example.com REWLOY_API_KEY=rwk_test_… composer liv
 - Optional: `REWLOY_STAFF_SESSION`, or `REWLOY_STAFF_EMAIL` and `REWLOY_STAFF_PASSWORD`
   (a team session with a seat in the test business, no second factor). `resetTestEnvironment`
   refuses an API key, so without a session the reset is skipped and the summary says so.
+  `REWLOY_STAFF_PASSWORD`: that person's password; freezing a branch (`freezeLocation`) asks
+  for it, so without it the freeze tests skip and the summary says so.
   `REWLOY_WEBHOOK_URL`: a public https address for the webhook tests, used only if the
   server refuses the unresolvable one (default `https://example.com/rewloy-live-tests`).
 - It first asks `GET /v1/meta` (no key is sent) and stops with exit code 2 unless
@@ -985,10 +1125,16 @@ REWLOY_BASE_URL=https://dev.example.com REWLOY_API_KEY=rwk_test_… composer liv
   issuing, the till view, stamp, redeem and spend; sales with and without a receipt
   reference, `reverseSale`, `reverseAction`, the operations list; customer search;
   codes (`listAllBatches`, send-link refusals); webhooks (create, list, rotate the
-  secret, delete); `Idempotency-Key`; rate-limit headers; the error object (404 and
-  validation); pagination; and last the test reset. It prints passed/failed per area
+  secret, delete, the 1.3.0 events); `Idempotency-Key`; rate-limit headers; the error
+  object (404 and validation); pagination. From 1.3.0: product groups and earn rules
+  (save, revision conflict, single rules), `previewEarn`, `previewSale`, `recordSale`
+  with receipt lines and the `earn` explanation, a line refund, the branch QR (public
+  page, SVG, PNG, PDF sheets, the list), branch freeze (needs the team session and
+  password; each test freezes a branch of its own and opens it again), `copyProgram` and
+  `NOT_AN_INSTRUMENT`. Last comes the test reset. It prints passed/failed per area
   and exits non-zero on any failure. A test business resets at most 5 times a day.
-  What is not covered yet (API 1.3 operations): [tests/Live/TODO.md](tests/Live/TODO.md).
+  What is not covered yet (`BUSINESS_FROZEN`, codes on a branch QR, the Rewloy Cüzdan
+  operations…): [tests/Live/TODO.md](tests/Live/TODO.md).
 
 ### Security and licence
 

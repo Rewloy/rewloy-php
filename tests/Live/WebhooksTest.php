@@ -92,6 +92,24 @@ final class WebhooksTest extends LiveCase
         self::assertContains('pass.issued', $events);
         self::assertContains('pass.activity', $events);
         self::assertContains('pass.voided', $events);
+        foreach (['pass.extended', 'location.frozen', 'location.unfrozen', 'business.paused', 'business.resumed'] as $event) {
+            self::assertContains($event, $events, "API 1.3.0 event $event");
+        }
+    }
+
+    public function testAWebhookCanSubscribeToTheEventsOfApi130(): void
+    {
+        $events = ['pass.extended', 'location.frozen', 'location.unfrozen', 'business.paused', 'business.resumed'];
+        try {
+            $made = $this->rewloy->createWebhook(['body' => ['url' => self::UNRESOLVABLE, 'events' => $events]]);
+        } catch (\Rewloy\Exception\RewloyException $e) {
+            self::assertSame(ErrorCode::BAD_WEBHOOK_URL, $e->errorCode);
+            $public = trim((string) getenv('REWLOY_WEBHOOK_URL'));
+            $made = $this->rewloy->createWebhook(['body' => ['url' => $public !== '' ? $public : 'https://example.com/rewloy-live-tests', 'events' => $events]]);
+        }
+        Fixture::trackWebhook($made['webhook']['id']);
+
+        self::assertEqualsCanonicalizing($events, $made['webhook']['events']);
     }
 
     public function testRotateTheSecret(): void

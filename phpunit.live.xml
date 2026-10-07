@@ -27,6 +27,9 @@
             <file>tests/Live/ProgramsTest.php</file>
             <file>tests/Live/PassesTest.php</file>
             <file>tests/Live/SalesTest.php</file>
+            <file>tests/Live/EarnRulesTest.php</file>
+            <file>tests/Live/BranchQrTest.php</file>
+            <file>tests/Live/BranchFreezeTest.php</file>
             <file>tests/Live/CustomersTest.php</file>
             <file>tests/Live/BatchesTest.php</file>
             <file>tests/Live/WebhooksTest.php</file>

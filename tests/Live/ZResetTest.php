@@ -21,43 +21,13 @@ final class ZResetTest extends LiveCase
 {
     public const AREA = 'test reset';
 
-    private static ?Client $staff = null;
-
-    private static ?string $staffError = null;
-
-    private static bool $resolved = false;
-
     private function staff(): Client
     {
-        if (!self::$resolved) {
-            self::$resolved = true;
-            self::$staff = $this->openStaffSession();
+        $staff = Fixture::staff();
+        if ($staff === null) {
+            self::markTestSkipped('the reset ' . Fixture::staffError());
         }
-        if (self::$staff === null) {
-            self::markTestSkipped(self::$staffError ?? 'no team session given');
-        }
-        return self::$staff;
-    }
-
-    private function openStaffSession(): ?Client
-    {
-        $merchant = $this->rewloy->getBusiness()['id'];
-        $token = trim((string) getenv('REWLOY_STAFF_SESSION'));
-        if ($token === '') {
-            $email = trim((string) getenv('REWLOY_STAFF_EMAIL'));
-            $password = (string) getenv('REWLOY_STAFF_PASSWORD');
-            if ($email === '' || $password === '') {
-                self::$staffError = 'the reset needs a team session: set REWLOY_STAFF_SESSION, or REWLOY_STAFF_EMAIL and REWLOY_STAFF_PASSWORD';
-                return null;
-            }
-            $login = (new Client(baseUrl: Guard::$baseUrl))->login(['body' => ['email' => $email, 'password' => $password]]);
-            if ($login['mfaRequired']) {
-                self::$staffError = 'the staff login asks for a second factor: give REWLOY_STAFF_SESSION of a proven session instead';
-                return null;
-            }
-            $token = $login['token'];
-        }
-        return new Client(staffSession: $token, merchant: $merchant, baseUrl: Guard::$baseUrl, userAgent: 'rewloy-php-live-tests');
+        return $staff;
     }
 
     public function testAnApiKeyCannotResetTheTestBusiness(): void

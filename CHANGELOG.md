@@ -5,13 +5,102 @@ https://rewloy.com/gelistiriciler/degisiklikler
 
 This library's releases. The API's own changes are listed at the link above.
 
-## Yayımlanmamış / Unreleased
+## 0.3.0 (2026-10-07)
 
-`tests/Live` ve `composer live`: kütüphaneyi çalışan bir dev Rewloy'una karşı sınayan
-canlı testler (README, "Canlı testler"). Kütüphanenin kendisi değişmedi.
+Rewloy API 1.3.0'ı izler (API sürümü, `info.version`): 298 işlem (0.2.4'te 260),
+hiçbiri kaldırılmadı; yeni alanlar, olaylar ve hata kodları da yalnız eklenti.
+Fiş satırları ve kazanım kuralları, şube QR'ı, şube dondurma ve kod kartlarının
+yeni alanları. Ayrıca `tests/Live` ve `composer live`: kütüphaneyi çalışan bir dev
+Rewloy'una karşı sınayan canlı testler (README, "Canlı testler"); 1.3.0 işlemlerini de
+kapsar. Beş kütüphane 0.3.0'da aynı sürüme gelir.
 
-The live tests (`tests/Live`, `composer live`) exercise the library against a running dev
-Rewloy (README, "Live tests"). The library itself is unchanged.
+Follows Rewloy API 1.3.0 (the product version in `info.version`): 298
+operations (260 in 0.2.4), none removed; the new fields, events and error codes
+are additions too. All five client libraries are 0.3.0. Additive: no call that
+worked with 0.2.4 changes (see "Compatibility" below for the few places where a
+type got wider).
+
+- **Receipt lines on a sale.** `recordSale` takes optional `lines` (up to 500:
+  `lineId`, `name`, `sku`, `category` as a string or a path, `quantity` with three
+  decimals, `unit`, `unitPriceMinor`, `discountMinor`, `totalMinor`, `kind`, `tags`)
+  and `receiptDiscountMinor`. The answer then carries `earn`: each line's `status`
+  (`earned`, `no_rule`, `excluded`, `below_unit_price`, `refunded`…), its groups
+  and rules, each rule's sentence and the total step by step (caps, promotion,
+  `credited`). New `reason`s on a sale that wrote nothing: `no_earning_lines`,
+  `no_lines`, `daily_cap_reached`, `monthly_cap_reached`. Refusals only with lines:
+  `422 LINE_AMOUNT_INVALID`, `422 LINES_TOTAL_MISMATCH`, `422 TOO_MANY_LINES`.
+  A programme without rules earns as in 0.2.4.
+- **New `previewSale`** (`POST /v1/passes/{serial}/sale/preview`): `recordSale`'s
+  answer now, with `preview: true`, and nothing written (takes no
+  `Idempotency-Key`). **New `previewEarn`**
+  (`POST /v1/programs/{id}/earn-rules/preview`): what a receipt would earn, with
+  no card, optionally against a draft `ruleSet` and a card's day and month
+  (`context`).
+- **Line refunds.** `reverseSale` takes `lines: [['lineId' => …, 'quantity' => …,
+  'amountMinor' => …]]`: the sale is judged again without them and only the
+  difference is taken back. The answer carries `earn` and `linesLeft`. New refusals
+  only with lines: `404 LINE_NOT_FOUND`, `409 LINE_ALREADY_REFUNDED`.
+  `passAction` `spend` takes `billMinor` for a cashback card whose rules cap the
+  share of a bill (`422 BILL_REQUIRED`, `409 SPEND_SHARE_EXCEEDED`).
+- **Product groups and earn rules.** `listEarnGroups`, `createEarnGroup`,
+  `getEarnGroup`, `updateEarnGroup`, `deleteEarnGroup` (`409 GROUP_IN_USE`),
+  `listSeenLines`, `listEarnSources`, `ignoreSeenLine`, `unignoreSeenLine`;
+  `getEarnRules`, `putEarnRules`, `deleteEarnRules`, `createEarnRule`,
+  `updateEarnRule`, `deleteEarnRule`, `listEarnRuleRevisions` (paged),
+  `listEarnTemplates`. Every save is a revision, compare-and-set on `revision`
+  (`409 REVISION_CONFLICT`); `422 RULE_KIND_NOT_FOR_TYPE`,
+  `404 EARN_RULE_NOT_FOUND`, `404 EARN_RULES_NOT_FOUND`. The rule kinds and
+  settings are typed (`stamp.perUnit`, `points.rate`, `cashback.groupRate`,
+  `vip.visit`…). A programme's `sale` carries `rules` and `text`.
+- **Branch QR.** Every branch has a permanent QR: `qr` (`code`, `url`, `state`) and
+  `stats.qrCards30` on every branch. New `publicBranch` (no credential),
+  `holderBranch` and `joinHolderBranch` (a Rewloy Cüzdan session), the QR as
+  `locationQrSvg` / `locationQrPng` (`size` 512–4096) and the printed sheets
+  `locationQrSheetPdf` / `locationQrSheetSvg` (`form` `a4`, `a6`, `sticker`), the
+  list the business arranges (`getLocationQrItems`, `putLocationQrItems`,
+  `addQrItems`, `previewLocationQr`; `409 QR_LIST_CHANGED`), `qrListFrom` and
+  `programIds` on `createLocation`, `branchCode` and `format` on the join QR.
+  Errors `BRANCH_NOT_FOUND`, `BRANCH_GONE`, `ITEM_NOT_OFFERED`, `PROOF_REQUIRED`,
+  `QR_ITEM_INVALID`, `NOT_VALID_HERE`. The files come back as a string of bytes.
+- **Code cards.** `copyProgram` (`POST /v1/programs/{id}/copy`: only a gift card,
+  coupon or discount card; a loyalty card is `422 NOT_AN_INSTRUMENT`),
+  `extendProgramCards`, `updateBatch`. On programmes `giftValueMinor`,
+  `offerValueMinor`, `usage`, `usageLimit`, `validity`, `terms`, `joinWindow`; on
+  codes `channels`, `qrLocationIds`, `claimFrom`, `claimUntil`, `terms`,
+  `proofRequired` and the `scheduled` state (`listAllBatches` takes
+  `status: 'scheduled'`). Errors `BATCH_NOT_OPEN`, `BATCH_CAP_REQUIRED`,
+  `BATCH_PER_PERSON_REQUIRED`, `CLAIM_AFTER_CARD_END`, `CAPACITY_BELOW_CLAIMED`.
+- **Branch freeze.** `freezeLocation` (a team session and the person's password:
+  an API key is refused), `updateLocationFreeze`, `cancelLocationFreeze`,
+  `unfreezeLocation` (these three also with a key that holds `locations.freeze`),
+  `listLocationFreezes` (with the free days left). `frozen` on every branch and
+  on the till view. A frozen branch's till answers `409 LOCATION_FROZEN`, and a
+  business whose every branch is frozen `409 BUSINESS_FROZEN`; also
+  `ALREADY_FROZEN`, `NOT_FROZEN`, `LOCATION_ARCHIVED`, `FREEZE_LIMIT`,
+  `FREEZE_STARTED`. `getPlan` carries `billing.days`.
+- **Webhooks.** New events `pass.extended` (`reason`, `from`, `to`),
+  `location.frozen`, `location.unfrozen`, `business.paused`, `business.resumed`
+  (not about a card: `card` and `customer_id` are null); `via` on `pass.issued`.
+  `createWebhook` accepts them. A shop link may be of the new platform `rewloy`;
+  a shop's `lastDelivery.result` may be `refund_lines`.
+- **`getMeta`** now types `environment` (`'live'` or `'dev'`), which the API has
+  returned since 1.2.1.
+- **Live tests** (`tests/Live`, `composer live`) run the library against a running dev
+  Rewloy (README, "Live tests") and now cover the 1.3.0 operations a test
+  business can exercise: product groups and earn rules, receipt lines on
+  `recordSale` and `previewSale` with the earn explanation, `previewEarn`, a line
+  refund, the branch QR (public page, SVG, PNG, PDF sheets, the list), branch freeze
+  (with a team session and `REWLOY_STAFF_PASSWORD`), `copyProgram` and its refusal.
+  The library itself is unchanged by this.
+
+Compatibility. Nothing was removed or renamed and no required argument was added to an
+existing operation. In PHPStan and your editor, a few answer types got wider
+(additions to unions: `webhook.events`, `listAllBatches` `state`, shop `platform`,
+`recordSale` `reason`) and a few answers got new keys (`qr`, `frozen`,
+`stats.qrCards30` on branches; `channels`, `claimFrom`… on codes): code that
+`match`es exhaustively on one of those unions needs a default arm. The titles of
+two error codes changed (`GROUP_NOT_FOUND` is now "Grup bulunamadı", `GROUP_IN_USE` "Grup kullanılıyor",
+since earn groups share them with branch groups; the codes are the same).
 
 ## 0.2.4 (2026-10-06)
 

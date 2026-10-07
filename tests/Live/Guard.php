@@ -51,12 +51,10 @@ final class Guard
         } catch (Throwable $e) {
             self::refuse('GET /v1/meta could not be reached at ' . $base . ' (' . $e->getMessage() . '): the environment cannot be verified.');
         }
-        // `environment` is newer than the 0.2.4 array shape (a TODO for the regeneration), so read it as data.
-        $environment = array_key_exists('environment', $meta) ? $meta['environment'] : null;
-        if ($environment !== 'dev') {
+        if ($meta['environment'] !== 'dev') {
             self::refuse(sprintf(
-                'GET /v1/meta says environment=%s, not "dev": the live tests run only against a dev server.',
-                is_string($environment) ? '"' . $environment . '"' : 'missing',
+                'GET /v1/meta says environment="%s", not "dev": the live tests run only against a dev server.',
+                $meta['environment'],
             ));
         }
         self::$baseUrl = $base;
