@@ -85,9 +85,14 @@ final class ZResetTest extends LiveCase
 
     public function testTheTeamSessionIsClosed(): void
     {
-        $this->staff()->logout();
+        $staff = $this->staff();
+        if (!Fixture::staffOwned()) {
+            // A session handed in through REWLOY_STAFF_SESSION is not this suite's to close: later suites and libraries use it.
+            self::markTestSkipped('the team session was given (REWLOY_STAFF_SESSION), so the suite does not close it; set REWLOY_STAFF_EMAIL and REWLOY_STAFF_PASSWORD to test logout');
+        }
+        $staff->logout();
 
-        $e = $this->refusal(fn () => $this->staff()->getTestEnvironment());
+        $e = $this->refusal(fn () => $staff->getTestEnvironment());
         self::assertSame(401, $e->status);
     }
 }

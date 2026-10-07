@@ -50,6 +50,7 @@ final class Fixture
     private static ?string $staffError = null;
 
     private static bool $staffResolved = false;
+    private static bool $staffOwned = false;
 
     private function __construct()
     {
@@ -203,6 +204,12 @@ final class Fixture
         return self::$staff;
     }
 
+    /** True only when the suite opened the team session itself (email and password); a handed-in session is not the suite's to close. */
+    public static function staffOwned(): bool
+    {
+        return self::$staffOwned;
+    }
+
     public static function staffError(): string
     {
         return self::$staffError ?? 'no team session given';
@@ -232,6 +239,7 @@ final class Fixture
                 return null;
             }
             $token = $login['token'];
+            self::$staffOwned = true;
         }
         return new Client(staffSession: $token, merchant: $merchant, baseUrl: Guard::$baseUrl, userAgent: 'rewloy-php-live-tests');
     }
