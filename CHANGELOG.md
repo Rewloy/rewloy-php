@@ -7,14 +7,14 @@ This library's releases. The API's own changes are listed at the link above.
 
 ## 0.3.0 (2026-10-07)
 
-Rewloy API 1.3.0'ı izler (API sürümü, `info.version`): 298 işlem (0.2.4'te 260),
+Rewloy API 1.3.2'yi izler (çekirdek v1.3.2) (API sürümü, `info.version`): 298 işlem (0.2.4'te 260),
 hiçbiri kaldırılmadı; yeni alanlar, olaylar ve hata kodları da yalnız eklenti.
 Fiş satırları ve kazanım kuralları, şube QR'ı, şube dondurma ve kod kartlarının
 yeni alanları. Ayrıca `tests/Live` ve `composer live`: kütüphaneyi çalışan bir dev
 Rewloy'una karşı sınayan canlı testler (README, "Canlı testler"); 1.3.0 işlemlerini de
 kapsar. Beş kütüphane 0.3.0'da aynı sürüme gelir.
 
-Follows Rewloy API 1.3.0 (the product version in `info.version`): 298
+Follows Rewloy API 1.3.2 (core v1.3.2; the product version in `info.version`): 298
 operations (260 in 0.2.4), none removed; the new fields, events and error codes
 are additions too. All five client libraries are 0.3.0. Additive: no call that
 worked with 0.2.4 changes (see "Compatibility" below for the few places where a
@@ -85,6 +85,9 @@ type got wider).
   a shop's `lastDelivery.result` may be `refund_lines`.
 - **`getMeta`** now types `environment` (`'live'` or `'dev'`), which the API has
   returned since 1.2.1.
+- **API 1.3.2** changes nothing in the 298 operations: six console-only error codes join `ErrorCode`
+  (`DPA_DRAFT`, `SUMMARY_REQUIRED`, `PREVIEW_CHANGED`, `DAY_CHANGED`, `NOTHING_TO_SEND`,
+  `NOTICE_TOO_LATE`; `/v1` never returns them) and the description of `signup` changed.
 - **Live tests** (`tests/Live`, `composer live`) run the library against a running dev
   Rewloy (README, "Live tests") and now cover the 1.3.0 operations a test
   business can exercise: product groups and earn rules, receipt lines on

@@ -87,7 +87,7 @@ final class V130Test extends TestCase
 
     public function testKnowsTheOperationsOfApi130AndNoneWasRemoved(): void
     {
-        self::assertSame('1.3.0', Operations::API_VERSION);
+        self::assertSame('1.3.2', Operations::API_VERSION);
         self::assertCount(298, Operations::ALL);
         foreach (['previewSale', 'previewEarn', 'copyProgram', 'extendProgramCards', 'updateBatch', 'listEarnGroups', 'createEarnGroup', 'getEarnGroup', 'updateEarnGroup',
             'deleteEarnGroup', 'listSeenLines', 'listEarnSources', 'ignoreSeenLine', 'unignoreSeenLine', 'getEarnRules', 'putEarnRules', 'deleteEarnRules', 'createEarnRule',
